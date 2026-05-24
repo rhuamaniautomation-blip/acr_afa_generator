@@ -46,51 +46,230 @@ st.set_page_config(
 # ==============================================================================
 st.markdown("""
 <style>
-/* Encabezado institucional */
-.inst-header {
-    background: linear-gradient(135deg, #1e3a5f 0%, #2a5a8c 100%);
-    color: white; padding: 16px 24px; border-radius: 8px;
-    margin-bottom: 18px; display: flex; align-items: center; gap: 16px;
-}
-.inst-title { font-size: 1.45rem; font-weight: 700; letter-spacing: .5px; }
-.inst-subtitle { font-size: .85rem; opacity: .85; }
+/* ── Google Fonts ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-/* Secciones */
+/* ── Reset y tipografia base ── */
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+
+/* ── Sidebar institucional ── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1a2f4a 0%, #1e3a5f 60%, #162d47 100%) !important;
+    border-right: 3px solid #1e60a8;
+}
+[data-testid="stSidebar"] * {
+    color: #e8edf2 !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background: rgba(255,255,255,0.08) !important;
+    border: 1px solid rgba(255,255,255,0.18) !important;
+    color: #e8edf2 !important;
+    border-radius: 6px !important;
+    font-weight: 500 !important;
+    transition: all .2s !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(30,96,168,0.6) !important;
+    border-color: #4a90d9 !important;
+    color: white !important;
+}
+[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.15) !important; }
+
+/* ── Encabezado principal ── */
+.inst-header-main {
+    background: linear-gradient(135deg, #1e3a5f 0%, #1e60a8 100%);
+    color: white; padding: 18px 28px; border-radius: 10px;
+    margin-bottom: 20px; border-left: 5px solid #4a90d9;
+    box-shadow: 0 4px 16px rgba(30,58,95,.2);
+}
+.inst-title  { font-size: 1.5rem; font-weight: 700; letter-spacing: .4px; margin: 0; }
+.inst-sub    { font-size: .82rem; opacity: .82; margin-top: 4px; }
+
+/* ── Bandas de seccion ── */
 .seccion-band {
-    background: #1e60a8; color: white; font-weight: 700;
-    padding: 6px 14px; border-radius: 4px; margin: 14px 0 6px 0;
-    font-size: .95rem;
+    background: linear-gradient(90deg, #1e60a8 0%, #2a7fd4 100%);
+    color: white !important; font-weight: 600;
+    padding: 8px 16px; border-radius: 6px;
+    margin: 16px 0 8px 0; font-size: .92rem;
+    letter-spacing: .3px; border-left: 4px solid #ffc107;
+    box-shadow: 0 2px 6px rgba(30,96,168,.25);
 }
-/* Tarjetas de documento */
-.doc-card {
-    border: 1px solid #dee2e6; border-radius: 8px;
-    padding: 14px 18px; margin-bottom: 10px;
-    background: #f8f9fa;
-    transition: box-shadow .15s;
+.seccion-cat {
+    background: #1e3a5f; color: white !important; font-weight: 700;
+    padding: 8px 14px; border-radius: 6px; margin: 12px 0 6px 0;
+    font-size: .9rem; display: flex; align-items: center; gap: 8px;
 }
-.doc-card:hover { box-shadow: 0 4px 12px rgba(30,58,95,.15); }
 
-/* Badge de estado */
-.badge-BORRADOR     { background:#6c757d; color:white; border-radius:4px; padding:2px 8px; font-size:.78rem; }
-.badge-EN_ANALISIS  { background:#0d6efd; color:white; border-radius:4px; padding:2px 8px; font-size:.78rem; }
-.badge-REVISADO     { background:#ffc107; color:#212529; border-radius:4px; padding:2px 8px; font-size:.78rem; }
-.badge-APROBADO     { background:#198754; color:white; border-radius:4px; padding:2px 8px; font-size:.78rem; }
-.badge-CERRADO      { background:#212529; color:white; border-radius:4px; padding:2px 8px; font-size:.78rem; }
-.badge-RECHAZADO    { background:#dc3545; color:white; border-radius:4px; padding:2px 8px; font-size:.78rem; }
-
-/* Tabla WW */
-.ww-arrow { color: #1e60a8; font-weight: bold; font-size: 1.1rem; }
-
-/* Prioridad */
-.prio-BAJA    { background:#d1f2eb; border-radius:3px; padding:2px 6px; font-size:.8rem; }
-.prio-MEDIA   { background:#fef9c3; border-radius:3px; padding:2px 6px; font-size:.8rem; }
-.prio-ALTA    { background:#fde8c8; border-radius:3px; padding:2px 6px; font-size:.8rem; }
-.prio-CRITICA { background:#fcd0d0; border-radius:3px; padding:2px 6px; font-size:.8rem; font-weight:bold; }
-
-/* Botones de accion */
-div.stButton > button {
-    border-radius: 6px; font-weight: 600;
+/* ── Tarjetas de metricas ── */
+[data-testid="metric-container"] {
+    background: white; border: 1px solid #dee2e6;
+    border-radius: 10px; padding: 16px 20px;
+    box-shadow: 0 2px 8px rgba(30,58,95,.08);
+    border-top: 3px solid #1e60a8;
 }
+[data-testid="metric-container"] [data-testid="stMetricLabel"] {
+    font-size: .82rem !important; color: #6c757d !important; font-weight: 600 !important;
+    text-transform: uppercase; letter-spacing: .5px;
+}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    font-size: 2rem !important; font-weight: 700 !important; color: #1e3a5f !important;
+}
+
+/* ── Botones ── */
+div.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #1e60a8, #1a4f8a) !important;
+    color: white !important; border: none !important;
+    border-radius: 7px !important; font-weight: 600 !important;
+    padding: 8px 20px !important; letter-spacing: .3px;
+    box-shadow: 0 3px 10px rgba(30,96,168,.35) !important;
+    transition: all .2s !important;
+}
+div.stButton > button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #1a4f8a, #163d6e) !important;
+    box-shadow: 0 5px 16px rgba(30,96,168,.45) !important;
+    transform: translateY(-1px);
+}
+div.stButton > button[kind="secondary"] {
+    border: 1.5px solid #1e60a8 !important; color: #1e60a8 !important;
+    border-radius: 7px !important; font-weight: 500 !important;
+    background: white !important;
+}
+div.stButton > button[kind="secondary"]:hover {
+    background: #f0f6ff !important;
+}
+
+/* ── Inputs y selects ── */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea,
+.stSelectbox > div > div > div {
+    border: 1.5px solid #ced4da !important;
+    border-radius: 7px !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: .9rem !important;
+    transition: border-color .15s !important;
+}
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: #1e60a8 !important;
+    box-shadow: 0 0 0 3px rgba(30,96,168,.12) !important;
+}
+
+/* ── Labels de campos ── */
+.stTextInput label, .stTextArea label, .stSelectbox label,
+.stRadio label, .stDateInput label, .stNumberInput label {
+    font-weight: 600 !important; color: #2c3e50 !important;
+    font-size: .85rem !important; letter-spacing: .2px;
+}
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    background: #f0f4f8; border-radius: 10px 10px 0 0;
+    border-bottom: 2px solid #1e60a8; gap: 2px; padding: 4px 4px 0;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important; border-radius: 8px 8px 0 0 !important;
+    color: #4a5568 !important; font-weight: 600 !important;
+    font-size: .88rem !important; padding: 8px 16px !important;
+    border: none !important; transition: all .15s !important;
+}
+.stTabs [aria-selected="true"] {
+    background: #1e60a8 !important; color: white !important;
+    box-shadow: 0 -2px 8px rgba(30,96,168,.2) !important;
+}
+.stTabs [data-baseweb="tab-panel"] {
+    background: white; border: 1px solid #e2e8f0;
+    border-top: none; border-radius: 0 0 10px 10px;
+    padding: 20px !important;
+}
+
+/* ── Expanders ── */
+[data-testid="stExpander"] {
+    border: 1px solid #e2e8f0 !important; border-radius: 8px !important;
+    margin-bottom: 6px !important; overflow: hidden;
+}
+[data-testid="stExpander"] summary {
+    background: #f8fafc !important; border-radius: 8px !important;
+    font-weight: 600 !important; color: #1e3a5f !important;
+    padding: 10px 14px !important; font-size: .88rem !important;
+}
+[data-testid="stExpander"] summary:hover {
+    background: #eef3fa !important;
+}
+
+/* ── Dataframes / tablas ── */
+[data-testid="stDataFrame"] {
+    border: 1px solid #dee2e6 !important; border-radius: 8px;
+    overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+
+/* ── Mensajes de alerta ── */
+[data-testid="stAlert"] {
+    border-radius: 8px !important; border-left-width: 4px !important;
+    font-weight: 500 !important;
+}
+
+/* ── Badges de estado ── */
+.badge-estado {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: .76rem; font-weight: 700; letter-spacing: .4px;
+    text-transform: uppercase;
+}
+.badge-BORRADOR     { background:#e9ecef; color:#495057; }
+.badge-EN_ANALISIS  { background:#cfe2ff; color:#084298; }
+.badge-REVISADO     { background:#fff3cd; color:#664d03; }
+.badge-APROBADO     { background:#d1e7dd; color:#0a3622; }
+.badge-CERRADO      { background:#d3d3d3; color:#212529; }
+.badge-RECHAZADO    { background:#f8d7da; color:#842029; }
+
+/* ── Badges de prioridad ── */
+.prio-chip {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: .76rem; font-weight: 700;
+}
+.prio-BAJA    { background:#d1f2eb; color:#0e6655; }
+.prio-MEDIA   { background:#fef9c3; color:#7d6608; }
+.prio-ALTA    { background:#fde8c8; color:#9c4221; }
+.prio-CRITICA { background:#fcd0d0; color:#7b1818; border: 1px solid #e74c3c; }
+
+/* ── KPI Cards para Plan de Accion ── */
+.kpi-card {
+    background: white; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 18px 22px; text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    transition: transform .2s, box-shadow .2s;
+}
+.kpi-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,.1); }
+.kpi-num  { font-size: 2.4rem; font-weight: 800; line-height: 1.1; margin: 4px 0; }
+.kpi-label { font-size: .78rem; color: #6c757d; font-weight: 600;
+              text-transform: uppercase; letter-spacing: .5px; }
+.kpi-pend  { color: #dc3545; border-top: 4px solid #dc3545; }
+.kpi-proc  { color: #fd7e14; border-top: 4px solid #fd7e14; }
+.kpi-cerr  { color: #198754; border-top: 4px solid #198754; }
+.kpi-venc  { color: #6f42c1; border-top: 4px solid #6f42c1; }
+.kpi-total { color: #1e60a8; border-top: 4px solid #1e60a8; }
+
+/* ── Formularios (contenedor) ── */
+[data-testid="stForm"] {
+    background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 10px; padding: 16px 20px !important;
+}
+
+/* ── Dividers ── */
+hr { border: none; border-top: 1px solid #e9ecef; margin: 16px 0; }
+
+/* ── Progress bars ── */
+[data-testid="stProgress"] > div > div {
+    background: linear-gradient(90deg, #1e60a8, #4a90d9) !important;
+    border-radius: 4px !important;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #adb5bd; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #1e60a8; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1028,37 +1207,125 @@ def _tab_condiciones_6m(codigo, d, es_nuevo):
 
     st.markdown('<div class="seccion-band">8. REVISION DE CONDICIONES BASICAS — 6M</div>',
                 unsafe_allow_html=True)
+    st.caption("Verifique cada condicion basica. Complete la Condicion Actual (Hallazgo) y marque si aplica y si existe diferencia respecto al ideal.")
 
-    CATEGORIAS_6M = {
-        "MAQUINA": ["Lubricacion","Ajuste","Limpieza","Confiabilidad","Operatividad","Instalacion","Fabricacion"],
-        "MATERIAL": ["Seleccion correcta de componentes","Materiales","Especificacion"],
-        "MANO DE OBRA": ["Gente","Operador/mantenedor"],
-        "METODO": ["Proceso","Estándares de operacion","Diseño"],
-        "MEDICION": ["Confiabilidad de datos"],
-        "MEDIO AMBIENTE": ["Ambientales"],
+    # Condiciones ideales segun formato ORICA MAN-F-054 Ed.02
+    CONDICIONES_6M = {
+        "MAQUINA": [
+            ("Lubricacion",
+             "Los componentes estan lubricados con el tipo correcto, frecuencia, cantidad y metodo de lubricacion designado."),
+            ("Ajuste",
+             "La tornilleria y perneria tiene el nivel adecuado de ajuste segun especificacion."),
+            ("Limpieza",
+             "Los componentes estan libres de contaminantes para que puedan ser inspeccionados y no haya deterioro forzado."),
+            ("Confiabilidad",
+             "Se cuenta con data confiable para realizar los analisis de fallas y planes de remediacion."),
+            ("Operatividad",
+             "El equipo esta siendo usado a la velocidad, carga, presion, etc. para la cual fue disenado. El diseno fue seguido para escribir las especificaciones o estandares de operacion y opera de esa forma."),
+            ("Instalacion",
+             "El equipo fue instalado bajo un riguroso seguimiento de practicas de construccion y estandares. Las condiciones de diseno de instalaciones fueron alcanzadas y se siguen."),
+            ("Fabricacion",
+             "El producto esta siendo fabricado y armado como lo especifica la placa o patron de diseno."),
+        ],
+        "MATERIAL": [
+            ("Seleccion correcta de componentes",
+             "Los dibujos y planos son correctos. Las especificaciones de materiales son las adecuadas de acuerdo al diseno. Cuenta con la configuracion correcta."),
+            ("Materiales",
+             "Se han usado los materiales correctos en cantidad y especificacion de acuerdo a la guia de proceso y especificaciones del material."),
+            ("Especificacion",
+             "Las especificaciones tecnicas del material cumplen con los requerimientos del proceso y estan documentadas."),
+        ],
+        "MANO DE OBRA": [
+            ("Gente",
+             "El personal cuenta con los skills tecnicos para poder realizar sus tareas. Han demostrado tener la habilidad para realizarlas."),
+            ("Operador/mantenedor",
+             "El operador o mantenedor ejecuta las tareas segun el procedimiento establecido, sin desviaciones que dahen el equipo o generen reprocesos."),
+        ],
+        "METODO": [
+            ("Proceso",
+             "Las principales variables de proceso (presion, temperatura, caudal, flujo) estan dentro del rango de operacion normal. El proceso incorpora elementos que permitan identificar/evitar defectos rapidamente: gestion visual, poka yoke, checklist, LUPS."),
+            ("Estandares de operacion",
+             "Los procesos de trabajo definidos no estan generando el problema. Estan siendo seguidos consistentemente. Check list, Procedimientos, Entrenamientos. Los pasos y su secuencia han sido definidos correctamente. El layout de operacion ayuda a que el trabajo se realice sin errores ni reprocesos. No se realizan acciones que dahen al equipo o sean innecesarias."),
+            ("Diseno",
+             "El diseno del equipo/proceso fue seguido para escribir las especificaciones o estandares de operacion y opera de esa forma. El layout de operacion es el adecuado."),
+        ],
+        "MEDICION": [
+            ("Confiabilidad de datos",
+             "Se cuenta con data confiable y trazable para realizar los analisis de fallas y planes de remediacion. Los instrumentos de medicion estan calibrados y dentro de rango."),
+        ],
+        "MEDIO AMBIENTE": [
+            ("Ambientales",
+             "El equipo esta siendo usado en condiciones ambientales aceptables (temperatura, humedad, polvo, vibracion, corrosion, etc.) segun especificacion del fabricante."),
+        ],
+    }
+
+    ICONO_CAT = {
+        "MAQUINA": "⚙️", "MATERIAL": "🔩", "MANO DE OBRA": "👷",
+        "METODO": "📋", "MEDICION": "📏", "MEDIO AMBIENTE": "🌿"
     }
 
     conds_db = {f"{r['categoria_6m']}|{r['item']}": dict(r)
                 for r in db_query("SELECT * FROM condiciones_basicas WHERE codigo_acr=?", (codigo,))}
 
     cambios = []
-    for cat, items in CATEGORIAS_6M.items():
-        st.markdown(f"**{cat}**")
-        for item in items:
+    for cat, items in CONDICIONES_6M.items():
+        st.markdown(f"""
+        <div style="background:#1e3a5f;color:white;font-weight:700;padding:8px 14px;
+                    border-radius:6px;margin:14px 0 8px 0;font-size:.95rem;">
+            {ICONO_CAT.get(cat,'')} {cat}
+        </div>""", unsafe_allow_html=True)
+
+        for (item, condicion_ideal_default) in items:
             key = f"{cat}|{item}"
             existing = conds_db.get(key, {})
-            with st.expander(f"  {item}", expanded=False):
-                cc1, cc2 = st.columns(2)
-                ideal   = cc1.text_area("Condicion Ideal",  value=existing.get('condicion_ideal',''),  key=f"ci_{key}")
-                actual  = cc2.text_area("Condicion Actual (Hallazgo)", value=existing.get('condicion_actual',''), key=f"ca_{key}")
+            aplica_val = existing.get('aplica', 'SI')
+            diferencia_val = existing.get('diferencia', 'NO')
+
+            # Color de borde segun estado
+            if aplica_val == 'SI' and diferencia_val == 'SI':
+                border_color = "#dc3545"  # rojo = diferencia detectada
+                estado_icon = "🔴"
+            elif aplica_val == 'NO':
+                border_color = "#6c757d"  # gris = no aplica
+                estado_icon = "⚫"
+            else:
+                border_color = "#198754"  # verde = OK
+                estado_icon = "🟢"
+
+            with st.expander(f"{estado_icon} **{item}**", expanded=(diferencia_val=='SI')):
+                # Condicion ideal (pre-rellenada, editable)
+                st.markdown("**📌 Condicion Ideal:**")
+                ideal = st.text_area("",
+                    value=existing.get('condicion_ideal', condicion_ideal_default),
+                    height=90, key=f"ci_{key}",
+                    help="Esta es la condicion que deberia existir segun el estandar.")
+
+                # Condicion actual (hallazgo)
+                st.markdown("**🔍 Condicion Actual — Hallazgo o Causa Inmediata:**")
+                actual = st.text_area("",
+                    value=existing.get('condicion_actual',''),
+                    height=80, key=f"ca_{key}",
+                    placeholder="Describa lo que encontro en campo...",
+                    help="Describa la condicion real encontrada durante la inspeccion.")
+
                 cr1, cr2 = st.columns(2)
-                aplica  = cr1.selectbox("Aplica", ['SI','NO'],
-                    index=0 if existing.get('aplica','SI')=='SI' else 1, key=f"ap_{key}")
-                diferencia = cr2.selectbox("Existe Diferencia", ['NO','SI'],
-                    index=0 if existing.get('diferencia','NO')=='NO' else 1, key=f"df_{key}")
+                aplica = cr1.radio(f"¿Aplica esta condicion?",
+                    ['SI','NO'],
+                    index=0 if aplica_val == 'SI' else 1,
+                    horizontal=True, key=f"ap_{key}")
+                diferencia = cr2.radio(f"¿Existe diferencia respecto al ideal?",
+                    ['NO','SI'],
+                    index=0 if diferencia_val == 'NO' else 1,
+                    horizontal=True, key=f"df_{key}")
+
+                if diferencia == 'SI':
+                    st.warning("⚠️ Se detectó diferencia. Esta condición debe incluirse en el análisis Why-Why.")
+
                 cambios.append((cat, item, ideal, actual, aplica, diferencia, existing.get('id')))
 
-    if st.button("💾 Guardar Condiciones 6M", type="primary", key="save_6m"):
+    st.markdown("---")
+    col_save, col_info = st.columns([1, 3])
+    if col_save.button("💾 Guardar Condiciones 6M", type="primary", key="save_6m", use_container_width=True):
         for cat, item, ideal, actual, aplica, diferencia, id_exist in cambios:
             if id_exist:
                 db_run("""UPDATE condiciones_basicas SET condicion_ideal=?,condicion_actual=?,aplica=?,diferencia=?
@@ -1067,8 +1334,13 @@ def _tab_condiciones_6m(codigo, d, es_nuevo):
                 db_run("""INSERT INTO condiciones_basicas
                     (codigo_acr,categoria_6m,item,condicion_ideal,condicion_actual,aplica,diferencia)
                     VALUES(?,?,?,?,?,?,?)""", (codigo, cat, item, ideal, actual, aplica, diferencia))
-        st.success("✅ Condiciones 6M guardadas.")
+        st.success("✅ Condiciones 6M guardadas correctamente.")
         st.rerun()
+
+    # Resumen de condiciones con diferencia
+    conds_actuales = db_query("SELECT * FROM condiciones_basicas WHERE codigo_acr=? AND diferencia='SI'", (codigo,))
+    if conds_actuales:
+        col_info.info(f"⚠️ **{len(conds_actuales)} condicion(es) con diferencia detectada** — deben incluirse en el análisis Why-Why.")
 
 def _tab_why_why(codigo, es_nuevo):
     if es_nuevo and not st.session_state.get('doc_codigo'):
@@ -1383,6 +1655,407 @@ def page_listado():
             st.success(f"Documento {sel_cod} eliminado.")
             st.rerun()
 
+# ── Página: Plan de Acción ─────────────────────────────────────────────────────
+def page_plan_accion():
+    show_header()
+    st.markdown("## 📊 Plan de Acción — Control y Seguimiento Gerencial")
+    st.caption("Gestión centralizada de todas las acciones ACR/AFA. Vista ejecutiva para Gerencias de Producción, Mantenimiento y SHES.")
+
+    # ── KPIs principales ──────────────────────────────────────────────────────
+    today = datetime.date.today().isoformat()
+
+    all_acc = db_query("""
+        SELECT ai.*, d.tipo_documento, d.area_equipo, d.prioridad as doc_prioridad,
+               d.estado as doc_estado
+        FROM acciones_inmediatas ai
+        JOIN documentos d ON ai.codigo_acr = d.codigo
+        ORDER BY ai.fecha ASC
+    """)
+    all_why = db_query("""
+        SELECT ww.*, d.tipo_documento, d.area_equipo, d.prioridad as doc_prioridad,
+               d.estado as doc_estado
+        FROM why_why ww
+        JOIN documentos d ON ww.codigo_documento = d.codigo
+        WHERE ww.accion_causa_raiz IS NOT NULL AND ww.accion_causa_raiz != ''
+        ORDER BY ww.fecha ASC
+    """)
+
+    # Combinar todas las acciones en una vista unificada
+    todas_acc = []
+    for a in all_acc:
+        todas_acc.append({
+            'origen': a['codigo_acr'],
+            'tipo_doc': a['tipo_documento'],
+            'tipo_accion': 'Inmediata / Contencion',
+            'accion': a['accion'],
+            'responsable': a['responsable'] or '—',
+            'fecha': a['fecha'] or '',
+            'estado': a['estado'] or 'PENDIENTE',
+            'eficacia': a['eficacia'] or 'POR_VERIFICAR',
+            'area': a['area_equipo'] or '—',
+            'prioridad': a['doc_prioridad'] or 'MEDIA',
+            'id_ref': f"AI-{a['id']}",
+        })
+    for w in all_why:
+        todas_acc.append({
+            'origen': w['codigo_documento'],
+            'tipo_doc': w['tipo_documento'],
+            'tipo_accion': 'Causa Raiz / Why-Why',
+            'accion': w['accion_causa_raiz'],
+            'responsable': w['responsable'] or '—',
+            'fecha': w['fecha'] or '',
+            'estado': w['estatus'] or 'PENDIENTE',
+            'eficacia': '—',
+            'area': w['area_equipo'] or '—',
+            'prioridad': w['prioridad'] or 'MEDIA',
+            'id_ref': f"WW-{w['id']}",
+        })
+
+    total    = len(todas_acc)
+    pend     = sum(1 for a in todas_acc if a['estado'] == 'PENDIENTE')
+    en_proc  = sum(1 for a in todas_acc if a['estado'] == 'EN_PROCESO')
+    cerradas = sum(1 for a in todas_acc if a['estado'] == 'CERRADO')
+    vencidas = sum(1 for a in todas_acc
+                   if a['fecha'] and a['fecha'] < today and a['estado'] not in ('CERRADO',))
+    porc_avance = round(cerradas / total * 100, 1) if total > 0 else 0
+
+    # KPI Cards
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.markdown(f"""<div class="kpi-card kpi-total">
+        <div class="kpi-label">Total Acciones</div>
+        <div class="kpi-num">{total}</div></div>""", unsafe_allow_html=True)
+    k2.markdown(f"""<div class="kpi-card kpi-pend">
+        <div class="kpi-label">Pendientes</div>
+        <div class="kpi-num">{pend}</div></div>""", unsafe_allow_html=True)
+    k3.markdown(f"""<div class="kpi-card kpi-proc">
+        <div class="kpi-label">En Proceso</div>
+        <div class="kpi-num">{en_proc}</div></div>""", unsafe_allow_html=True)
+    k4.markdown(f"""<div class="kpi-card kpi-cerr">
+        <div class="kpi-label">Cerradas</div>
+        <div class="kpi-num">{cerradas}</div></div>""", unsafe_allow_html=True)
+    k5.markdown(f"""<div class="kpi-card kpi-venc">
+        <div class="kpi-label">Vencidas</div>
+        <div class="kpi-num">{vencidas}</div></div>""", unsafe_allow_html=True)
+
+    st.markdown("")
+    st.markdown(f"**Avance global de cierre: {porc_avance}%**")
+    st.progress(porc_avance / 100)
+
+    if total == 0:
+        st.info("No hay acciones registradas en el sistema aun.")
+        return
+
+    # ── Filtros ───────────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔍 Filtros")
+    ff1, ff2, ff3, ff4 = st.columns(4)
+    f_estado_pa = ff1.selectbox("Estado", ['TODOS','PENDIENTE','EN_PROCESO','CERRADO'], key="pa_est")
+    f_tipo_pa   = ff2.selectbox("Tipo documento", ['TODOS','ACR','AFA'], key="pa_tipo")
+    f_prio_pa   = ff3.selectbox("Prioridad", ['TODAS','CRITICA','ALTA','MEDIA','BAJA'], key="pa_prio")
+    f_venc_pa   = ff4.checkbox("Solo vencidas", key="pa_venc")
+
+    acc_filtradas = todas_acc
+    if f_estado_pa != 'TODOS':
+        acc_filtradas = [a for a in acc_filtradas if a['estado'] == f_estado_pa]
+    if f_tipo_pa != 'TODOS':
+        acc_filtradas = [a for a in acc_filtradas if a['tipo_doc'] == f_tipo_pa]
+    if f_prio_pa != 'TODAS':
+        acc_filtradas = [a for a in acc_filtradas if a['prioridad'] == f_prio_pa]
+    if f_venc_pa:
+        acc_filtradas = [a for a in acc_filtradas
+                        if a['fecha'] and a['fecha'] < today and a['estado'] != 'CERRADO']
+
+    st.markdown(f"**{len(acc_filtradas)} accion(es) mostrada(s)**")
+
+    # ── Tabla de acciones ─────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Tabla de Acciones")
+
+    ESTADO_ICON = {'PENDIENTE':'🔴','EN_PROCESO':'🟡','CERRADO':'🟢'}
+    PRIO_ICON   = {'CRITICA':'🔴','ALTA':'🟠','MEDIA':'🟡','BAJA':'🟢'}
+
+    import pandas as pd
+    df_acc = pd.DataFrame([{
+        "Ref":          a['id_ref'],
+        "Documento":    a['origen'],
+        "Tipo Doc":     a['tipo_doc'],
+        "Tipo Accion":  a['tipo_accion'],
+        "Accion":       a['accion'][:80] + ('...' if len(a['accion'])>80 else ''),
+        "Responsable":  a['responsable'],
+        "Fecha Limite": a['fecha'],
+        "Estado":       f"{ESTADO_ICON.get(a['estado'],'⚪')} {a['estado']}",
+        "Prioridad":    f"{PRIO_ICON.get(a['prioridad'],'⚪')} {a['prioridad']}",
+        "Area":         a['area'],
+        "Eficacia":     a['eficacia'],
+    } for a in acc_filtradas])
+
+    st.dataframe(df_acc, use_container_width=True, hide_index=True,
+                 column_config={
+                     "Accion": st.column_config.TextColumn(width="large"),
+                     "Fecha Limite": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                 })
+
+    # ── Actualizar estado de accion inmediata ─────────────────────────────────
+    st.markdown("---")
+    st.markdown("### ✏️ Actualizar Estado de Accion")
+
+    acc_ids_inm = [a for a in acc_filtradas if a['id_ref'].startswith('AI-')]
+    if acc_ids_inm:
+        sel_ref = st.selectbox("Seleccionar accion inmediata:",
+            options=[''] + [a['id_ref'] for a in acc_ids_inm],
+            format_func=lambda x: x if not x else
+                f"{x} | {next((a['accion'][:60] for a in acc_ids_inm if a['id_ref']==x), '')}",
+            key="pa_sel_ref")
+
+        if sel_ref:
+            id_num = int(sel_ref.replace('AI-',''))
+            acc_sel = next((a for a in acc_ids_inm if a['id_ref'] == sel_ref), None)
+            if acc_sel:
+                with st.form(f"form_update_pa_{sel_ref}"):
+                    st.markdown(f"**Accion:** {acc_sel['accion']}")
+                    uc1, uc2, uc3 = st.columns(3)
+                    nuevo_est = uc1.selectbox("Nuevo Estado",
+                        ['PENDIENTE','EN_PROCESO','CERRADO'],
+                        index=['PENDIENTE','EN_PROCESO','CERRADO'].index(
+                            acc_sel['estado'].replace('🔴 ','').replace('🟡 ','').replace('🟢 ','')),
+                        key=f"nest_{sel_ref}")
+                    nueva_efic = uc2.selectbox("Eficacia",
+                        ['POR_VERIFICAR','EFICAZ','NO_EFICAZ'],
+                        index=['POR_VERIFICAR','EFICAZ','NO_EFICAZ'].index(
+                            acc_sel['eficacia'] if acc_sel['eficacia'] in ['POR_VERIFICAR','EFICAZ','NO_EFICAZ'] else 'POR_VERIFICAR'),
+                        key=f"nefic_{sel_ref}")
+                    fecha_cierre_pa = uc3.date_input("Fecha de Cierre Real",
+                        value=datetime.date.today(), key=f"nfech_{sel_ref}")
+                    obs_pa = st.text_area("Observaciones de cierre / evidencia", height=70,
+                                         key=f"nobs_{sel_ref}")
+
+                    if st.form_submit_button("✅ ACTUALIZAR ACCION", type="primary"):
+                        db_run("""UPDATE acciones_inmediatas SET estado=?,eficacia=?,fecha_cierre=?
+                            WHERE id=?""", (nuevo_est, nueva_efic, str(fecha_cierre_pa), id_num))
+                        st.success(f"✅ Accion {sel_ref} actualizada a estado: **{nuevo_est}**")
+                        st.rerun()
+
+    # ── Graficos de avance ────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📈 Indicadores de Avance")
+
+    gc1, gc2 = st.columns(2)
+
+    with gc1:
+        st.markdown("**Distribucion por Estado**")
+        estados_count = {'PENDIENTE': pend, 'EN_PROCESO': en_proc, 'CERRADO': cerradas}
+        df_est = pd.DataFrame(list(estados_count.items()), columns=['Estado','Cantidad'])
+        st.bar_chart(df_est.set_index('Estado'), color=['#dc3545'])
+
+    with gc2:
+        st.markdown("**Distribucion por Prioridad**")
+        prio_count = {}
+        for a in todas_acc:
+            p = a['prioridad']
+            prio_count[p] = prio_count.get(p, 0) + 1
+        df_prio = pd.DataFrame(list(prio_count.items()), columns=['Prioridad','Cantidad'])
+        st.bar_chart(df_prio.set_index('Prioridad'))
+
+    # Avance por documento
+    st.markdown("**Avance por Documento (% cerrado)**")
+    docs_uniq = {}
+    for a in todas_acc:
+        k = a['origen']
+        if k not in docs_uniq:
+            docs_uniq[k] = {'total':0,'cerrado':0,'tipo':a['tipo_doc'],'area':a['area']}
+        docs_uniq[k]['total'] += 1
+        if a['estado'] == 'CERRADO':
+            docs_uniq[k]['cerrado'] += 1
+
+    df_docs_avance = pd.DataFrame([{
+        'Documento': k,
+        'Tipo': v['tipo'],
+        'Area': v['area'],
+        'Total Acciones': v['total'],
+        'Cerradas': v['cerrado'],
+        'Pendientes': v['total'] - v['cerrado'],
+        '% Avance': round(v['cerrado']/v['total']*100, 1) if v['total']>0 else 0
+    } for k, v in docs_uniq.items()])
+
+    if not df_docs_avance.empty:
+        st.dataframe(
+            df_docs_avance.sort_values('% Avance'),
+            use_container_width=True, hide_index=True,
+            column_config={
+                "% Avance": st.column_config.ProgressColumn(
+                    "% Avance", min_value=0, max_value=100, format="%.1f%%")
+            }
+        )
+
+    # ── Exportar plan a PDF ───────────────────────────────────────────────────
+    st.markdown("---")
+    if st.button("📄 Exportar Plan de Accion en PDF (Informe Gerencial)", type="primary"):
+        with st.spinner("Generando informe gerencial..."):
+            pdf_b = _exportar_plan_accion_pdf(todas_acc, docs_uniq, today)
+        st.download_button("⬇️ Descargar Informe Gerencial PDF",
+                           pdf_b, file_name="Plan_Acciones_Gerencial.pdf",
+                           mime="application/pdf")
+
+
+def _exportar_plan_accion_pdf(todas_acc, docs_uniq, today):
+    """Genera PDF gerencial del plan de acciones."""
+    from reportlab.lib import colors as rc
+    from reportlab.lib.pagesizes import A4, landscape as rl_land
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.platypus import (BaseDocTemplate, PageTemplate, Frame,
+                                    Table, TableStyle, Paragraph, Spacer,
+                                    PageBreak, HRFlowable)
+    import io as _io
+
+    A4_L = rl_land(A4)
+    M = 15 * mm
+    AW = A4_L[0] - 2*M
+
+    buf = _io.BytesIO()
+    cfg = get_empresa_cfg()
+    nombre_emp = cfg.get('nombre_empresa') or 'EMPRESA INDUSTRIAL S.A.'
+    texto_pie  = cfg.get('texto_pie_pagina') or 'Documento Controlado | ISO 9001 / ISO 14224'
+
+    fr = Frame(M, M, AW, A4_L[1]-2*M, id='f')
+    def _pie(c, d):
+        c.saveState()
+        c.setFont('Helvetica', 7)
+        c.setFillColor(rc.HexColor('#6c757d'))
+        c.drawCentredString(A4_L[0]/2, M-5*mm, f'Pag. {d.page} | Plan de Accion | {nombre_emp}')
+        c.restoreState()
+
+    tpl = PageTemplate(id='land', frames=[fr], pagesize=A4_L, onPage=_pie)
+    doc = BaseDocTemplate(buf, pageTemplates=[tpl], pagesize=A4_L)
+
+    base = getSampleStyleSheet()
+    E = {
+        'h': ParagraphStyle('H', parent=base['Normal'], fontSize=11,
+                            fontName='Helvetica-Bold', textColor=rc.white, alignment=TA_CENTER),
+        'c': ParagraphStyle('C', parent=base['Normal'], fontSize=7, leading=9, fontName='Helvetica'),
+        'cb': ParagraphStyle('CB', parent=base['Normal'], fontSize=7, leading=9, fontName='Helvetica-Bold'),
+        'p': ParagraphStyle('P', parent=base['Normal'], fontSize=7, fontName='Helvetica-Oblique',
+                            textColor=rc.HexColor('#6c757d'), alignment=TA_CENTER),
+    }
+    AZ = rc.HexColor('#1e3a5f')
+    BL = rc.HexColor('#ffffff')
+    GC = rc.HexColor('#f8f9fa')
+    BO = rc.HexColor('#adb5bd')
+
+    EL = []
+
+    # Portada / Encabezado
+    EL.append(Table([[
+        Paragraph(f'<b>{nombre_emp}</b>', ParagraphStyle('T', parent=base['Normal'],
+            fontSize=16, fontName='Helvetica-Bold', textColor=AZ, alignment=TA_CENTER)),
+    ]], colWidths=[AW]))
+    EL.append(Spacer(1, 4))
+    EL.append(Table([[
+        Paragraph('<b>PLAN DE ACCION — INFORME GERENCIAL ACR / AFA</b>',
+            ParagraphStyle('S', parent=base['Normal'], fontSize=12, fontName='Helvetica-Bold',
+                          textColor=BL, alignment=TA_CENTER)),
+    ]], colWidths=[AW], style=[
+        ('BACKGROUND',(0,0),(-1,-1),AZ),
+        ('TOPPADDING',(0,0),(-1,-1),8),('BOTTOMPADDING',(0,0),(-1,-1),8),
+    ]))
+    EL.append(Spacer(1, 4))
+    EL.append(Paragraph(f'Fecha de generacion: {today} | Total acciones: {len(todas_acc)}', E['p']))
+    EL.append(Spacer(1, 8))
+
+    # Resumen KPI
+    pend = sum(1 for a in todas_acc if a['estado']=='PENDIENTE')
+    proc = sum(1 for a in todas_acc if a['estado']=='EN_PROCESO')
+    cerr = sum(1 for a in todas_acc if a['estado']=='CERRADO')
+    venc = sum(1 for a in todas_acc if a['fecha'] and a['fecha']<today and a['estado']!='CERRADO')
+    avance = round(cerr/len(todas_acc)*100, 1) if todas_acc else 0
+
+    kpi_data = [[
+        Paragraph('<b>TOTAL</b>', E['h']),
+        Paragraph('<b>PENDIENTE</b>', E['h']),
+        Paragraph('<b>EN PROCESO</b>', E['h']),
+        Paragraph('<b>CERRADAS</b>', E['h']),
+        Paragraph('<b>VENCIDAS</b>', E['h']),
+        Paragraph('<b>% AVANCE</b>', E['h']),
+    ],[
+        Paragraph(str(len(todas_acc)), ParagraphStyle('KN', parent=base['Normal'],
+            fontSize=22, fontName='Helvetica-Bold', alignment=TA_CENTER, textColor=AZ)),
+        Paragraph(str(pend), ParagraphStyle('KR', parent=base['Normal'],
+            fontSize=22, fontName='Helvetica-Bold', alignment=TA_CENTER, textColor=rc.HexColor('#dc3545'))),
+        Paragraph(str(proc), ParagraphStyle('KO', parent=base['Normal'],
+            fontSize=22, fontName='Helvetica-Bold', alignment=TA_CENTER, textColor=rc.HexColor('#fd7e14'))),
+        Paragraph(str(cerr), ParagraphStyle('KG', parent=base['Normal'],
+            fontSize=22, fontName='Helvetica-Bold', alignment=TA_CENTER, textColor=rc.HexColor('#198754'))),
+        Paragraph(str(venc), ParagraphStyle('KP', parent=base['Normal'],
+            fontSize=22, fontName='Helvetica-Bold', alignment=TA_CENTER, textColor=rc.HexColor('#6f42c1'))),
+        Paragraph(f'{avance}%', ParagraphStyle('KA', parent=base['Normal'],
+            fontSize=22, fontName='Helvetica-Bold', alignment=TA_CENTER, textColor=AZ)),
+    ]]
+    t_kpi = Table(kpi_data, colWidths=[AW/6]*6)
+    t_kpi.setStyle(TableStyle([
+        ('BACKGROUND',(0,0),(-1,0),AZ),
+        ('BOX',(0,0),(-1,-1),1,AZ),('INNERGRID',(0,0),(-1,-1),0.5,BO),
+        ('TOPPADDING',(0,0),(-1,-1),6),('BOTTOMPADDING',(0,0),(-1,-1),6),
+        ('BACKGROUND',(0,1),(-1,1),GC),
+    ]))
+    EL.append(t_kpi)
+    EL.append(Spacer(1, 8))
+
+    # Tabla principal de acciones
+    hdr_col = [Paragraph(f'<b>{t}</b>', E['h']) for t in
+               ['N','Documento','Tipo','Tipo Accion','Accion','Responsable','Fecha','Estado','Prioridad','Area','Eficacia']]
+    rows_pa = [hdr_col]
+    col_prio = {'BAJA':rc.HexColor('#d1f2eb'),'MEDIA':rc.HexColor('#fef9c3'),
+                'ALTA':rc.HexColor('#fde8c8'),'CRITICA':rc.HexColor('#fcd0d0')}
+    col_est  = {'PENDIENTE':rc.HexColor('#fcd0d0'),'EN_PROCESO':rc.HexColor('#fde8c8'),
+                'CERRADO':rc.HexColor('#d1f2eb')}
+
+    sty_pa = TableStyle([
+        ('BOX',(0,0),(-1,-1),0.8,AZ),('INNERGRID',(0,0),(-1,-1),0.3,BO),
+        ('BACKGROUND',(0,0),(-1,0),AZ),
+        ('VALIGN',(0,0),(-1,-1),'TOP'),
+        ('FONTSIZE',(0,0),(-1,-1),7),
+        ('LEFTPADDING',(0,0),(-1,-1),2),('RIGHTPADDING',(0,0),(-1,-1),2),
+        ('TOPPADDING',(0,0),(-1,-1),2),('BOTTOMPADDING',(0,0),(-1,-1),2),
+    ])
+
+    for i, a in enumerate(todas_acc, 1):
+        prio = a['prioridad']
+        est  = a['estado']
+        venc_flag = a['fecha'] and a['fecha'] < today and est != 'CERRADO'
+        row = [
+            Paragraph(str(i), E['cb']),
+            Paragraph(a['origen'], E['c']),
+            Paragraph(a['tipo_doc'], E['c']),
+            Paragraph(a['tipo_accion'], E['c']),
+            Paragraph((a['accion'] or '')[:70], E['c']),
+            Paragraph(a['responsable'], E['c']),
+            Paragraph(a['fecha'], E['c']),
+            Paragraph(est, ParagraphStyle('Es', parent=E['c'],
+                backColor=col_est.get(est, BL))),
+            Paragraph(prio, ParagraphStyle('Pr', parent=E['c'],
+                backColor=col_prio.get(prio, BL))),
+            Paragraph(a['area'], E['c']),
+            Paragraph(a['eficacia'], E['c']),
+        ]
+        rows_pa.append(row)
+        bg = GC if i%2==0 else BL
+        sty_pa.add('BACKGROUND',(0,i),(-1,i), rc.HexColor('#fff3cd') if venc_flag else bg)
+
+    t_pa = Table(rows_pa,
+        colWidths=[8*mm,20*mm,12*mm,28*mm,55*mm,22*mm,18*mm,20*mm,15*mm,18*mm,18*mm],
+        repeatRows=1)
+    t_pa.setStyle(sty_pa)
+    EL.append(t_pa)
+    EL.append(Spacer(1,8))
+    EL.append(HRFlowable(width='100%', thickness=0.8, color=BO))
+    EL.append(Paragraph(f'<i>{nombre_emp} | {texto_pie}</i>', E['p']))
+
+    doc.build(EL)
+    buf.seek(0)
+    return buf.read()
+
+
 # ==============================================================================
 # NAVEGACION PRINCIPAL
 # ==============================================================================
@@ -1419,6 +2092,10 @@ def main():
             st.session_state['pagina'] = 'listado'
             st.rerun()
 
+        if st.button("📊 Plan de Accion", use_container_width=True):
+            st.session_state['pagina'] = 'plan_accion'
+            st.rerun()
+
         st.markdown("#### ➕ Nuevo Documento")
         if st.button("🔍 Nuevo ACR", use_container_width=True, type="primary"):
             st.session_state['pagina'] = 'form'
@@ -1439,8 +2116,8 @@ def main():
 
         st.markdown("---")
         st.markdown("""
-        <small style='color:#6c757d'>
-        v10.0.0 | ISO 9001 · ISO 14224<br>
+        <small style='color:#adb5bd'>
+        v11.0.0 | ISO 9001 · ISO 14224<br>
         TPM · RCM · ORICA Standards<br>
         CAVA — Roger Huamani
         </small>""", unsafe_allow_html=True)
@@ -1455,6 +2132,8 @@ def main():
         page_listado()
     elif pagina == 'config':
         page_config_empresa()
+    elif pagina == 'plan_accion':
+        page_plan_accion()
     else:
         page_dashboard()
 
