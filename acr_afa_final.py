@@ -16,6 +16,9 @@ import datetime
 import base64
 import tempfile
 import uuid
+import hashlib
+import secrets as pysecrets
+import shutil
 from pathlib import Path
 from PIL import Image
 
@@ -274,17 +277,50 @@ hr { border: none; border-top: 1px solid #e9ecef; margin: 16px 0; }
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# BASE DE DATOS — Singleton con caché de sesión
+# BASE DE DATOS — Conexion por sesion, ligada a la carpeta de almacenamiento
 # ==============================================================================
-DB_PATH = "acr_afa_system.db"
+# IMPORTANTE: cada usuario/sesion de Streamlit elige su propia "carpeta de
+# almacenamiento" (workspace). Toda la data (documentos ACR/AFA, historico,
+# evidencias, usuarios) vive en un unico archivo SQLite dentro de esa carpeta:
+#   <carpeta_elegida>/acr_afa_system.db
+# Esto permite: (1) que el historico persista entre sesiones si la carpeta es
+# una ruta local/red persistente, y (2) que el usuario pueda respaldar/restaurar
+# ese archivo .db manualmente (boton de Backup) cuando la app corre en un
+# entorno efimero como Streamlit Community Cloud, donde el disco se reinicia
+# al reiniciar/redesplegar la app.
+DB_FILENAME = "acr_afa_system.db"
 
-@st.cache_resource
+def workspace_db_path():
+    wp = st.session_state.get('workspace_path')
+    if not wp:
+        return None
+    return os.path.join(wp, DB_FILENAME)
+
 def get_db():
-    """Crea y cachea la conexión a SQLite."""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    _crear_tablas(conn)
+    """Devuelve la conexion SQLite de la carpeta de almacenamiento activa.
+    La conexion se guarda en session_state (no en cache_resource) porque cada
+    sesion/usuario puede tener una carpeta distinta."""
+    path = workspace_db_path()
+    if not path:
+        raise RuntimeError("No hay una carpeta de almacenamiento configurada todavia.")
+    conn = st.session_state.get('_db_conn')
+    conn_path = st.session_state.get('_db_conn_path')
+    if conn is None or conn_path != path:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        conn = sqlite3.connect(path, check_same_thread=False, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
+        _crear_tablas(conn)
+        st.session_state['_db_conn'] = conn
+        st.session_state['_db_conn_path'] = path
     return conn
 
 def _crear_tablas(conn):
@@ -358,13 +394,81 @@ def _crear_tablas(conn):
             texto_encabezado TEXT, texto_pie_pagina TEXT,
             fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
+        """CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL,
+            nombre_completo TEXT,
+            rol TEXT CHECK(rol IN ('admin','usuario')) DEFAULT 'usuario',
+            area TEXT,
+            activo INTEGER DEFAULT 1,
+            creado_por TEXT,
+            fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ultimo_acceso TIMESTAMP
+        )""",
     ]
     for s in stmts:
         try:
             conn.execute(s)
         except Exception:
             pass
+    # Migracion suave: agrega columnas nuevas a tablas ya existentes (creadas
+    # con versiones anteriores del sistema) sin perder la data historica.
+    for alter_sql in [
+        "ALTER TABLE documentos ADD COLUMN creado_por TEXT",
+    ]:
+        try:
+            conn.execute(alter_sql)
+        except Exception:
+            pass
     conn.commit()
+
+# ==============================================================================
+# AUTENTICACION Y GESTION DE USUARIOS (por carpeta / workspace)
+# ==============================================================================
+def _hash_password(password, salt=None):
+    if salt is None:
+        salt = pysecrets.token_hex(16)
+    h = hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+    return h, salt
+
+def existe_algun_usuario():
+    row = db_one("SELECT COUNT(*) c FROM usuarios")
+    return bool(row and row["c"] > 0)
+
+def crear_usuario(username, password, nombre_completo="", rol="usuario", area="", creado_por=""):
+    username = (username or "").strip().lower()
+    if not username or not password:
+        raise ValueError("Usuario y contraseña son obligatorios.")
+    if db_one("SELECT id FROM usuarios WHERE username=?", (username,)):
+        raise ValueError(f"El usuario '{username}' ya existe.")
+    h, salt = _hash_password(password)
+    db_run("""INSERT INTO usuarios (username,password_hash,salt,nombre_completo,rol,area,creado_por)
+              VALUES(?,?,?,?,?,?,?)""",
+           (username, h, salt, nombre_completo.strip(), rol, area.strip(), creado_por))
+
+def autenticar_usuario(username, password):
+    row = db_one("SELECT * FROM usuarios WHERE username=?", ((username or "").strip().lower(),))
+    if not row or not row["activo"]:
+        return None
+    h, _ = _hash_password(password, row["salt"])
+    if h != row["password_hash"]:
+        return None
+    db_run("UPDATE usuarios SET ultimo_acceso=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
+    return dict(row)
+
+def listar_usuarios():
+    return db_query("SELECT * FROM usuarios ORDER BY rol DESC, fecha_creacion")
+
+def cambiar_password(username, nueva_password):
+    h, salt = _hash_password(nueva_password)
+    db_run("UPDATE usuarios SET password_hash=?, salt=? WHERE username=?",
+           (h, salt, (username or "").strip().lower()))
+
+def contar_admins_activos():
+    row = db_one("SELECT COUNT(*) c FROM usuarios WHERE rol='admin' AND activo=1")
+    return row["c"] if row else 0
 
 def db_query(sql, params=()):
     return get_db().execute(sql, params).fetchall()
@@ -927,7 +1031,9 @@ def page_form():
             fecha_reporte   = st.date_input("Fecha de Reporte *",
                 value=datetime.date.fromisoformat(d['fecha_reporte']) if d.get('fecha_reporte') else datetime.date.today(),
                 key="fr")
-            reportado_por   = st.text_input("Reportado por *", value=d.get('reportado_por',''), key="rp")
+            _usr_actual = st.session_state.get('usuario') or {}
+            _rp_default = d.get('reportado_por','') or (_usr_actual.get('nombre_completo') or _usr_actual.get('username') or '')
+            reportado_por   = st.text_input("Reportado por *", value=_rp_default, key="rp")
             cargo_reportante= st.text_input("Cargo del reportante", value=d.get('cargo_reportante',''), key="cr")
             area_reportante = st.text_input("Area reportante", value=d.get('area_reportante',''), key="ar")
         with c2:
@@ -1049,12 +1155,15 @@ def _save_doc_general(codigo, tipo, es_nuevo, local_vars):
     ia    = local_vars.get('imp_amb', '')
 
     if es_nuevo:
+        usr = st.session_state.get('usuario') or {}
+        creado_por = usr.get('nombre_completo') or usr.get('username') or ''
         db_run("""INSERT OR IGNORE INTO documentos
             (tipo_documento,codigo,fecha_reporte,estado,reportado_por,cargo_reportante,
              area_reportante,lider_afa,area_equipo,responsables,fecha_inicio_analisis,
-             aprobado_por,prioridad,costo_estimado,impacto_produccion,impacto_seguridad,impacto_ambiental)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-               (tipo,codigo,fr,est,rp,cr,ar,la,ae,resp,fi,ap,prio,ce,ip,is_,ia))
+             aprobado_por,prioridad,costo_estimado,impacto_produccion,impacto_seguridad,impacto_ambiental,
+             creado_por)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               (tipo,codigo,fr,est,rp,cr,ar,la,ae,resp,fi,ap,prio,ce,ip,is_,ia,creado_por))
     else:
         db_run("""UPDATE documentos SET
             fecha_reporte=?,estado=?,reportado_por=?,cargo_reportante=?,
@@ -1594,7 +1703,9 @@ def page_listado():
     fc1, fc2, fc3 = st.columns(3)
     f_tipo   = fc1.selectbox("Tipo", ['TODOS','ACR','AFA'])
     f_estado = fc2.selectbox("Estado", ['TODOS','BORRADOR','EN_ANALISIS','REVISADO','APROBADO','RECHAZADO','CERRADO'])
-    f_busq   = fc3.text_input("Buscar (codigo, descripcion, responsable)...")
+    f_busq   = fc3.text_input("Buscar (codigo, descripcion, causa raiz, area, responsable)...")
+    st.caption("💡 Use este buscador para revisar si un problema ya ocurrió antes: busque por equipo, "
+               "área o palabras clave de la causa raíz y compare con la causa identificada en cada caso.")
 
     sql = "SELECT * FROM documentos WHERE 1=1"
     params = []
@@ -1603,9 +1714,10 @@ def page_listado():
     if f_estado != 'TODOS':
         sql += " AND estado=?"; params.append(f_estado)
     if f_busq:
-        sql += " AND (codigo LIKE ? OR desc_problema_inicial LIKE ? OR responsables LIKE ? OR reportado_por LIKE ?)"
+        sql += """ AND (codigo LIKE ? OR desc_problema_inicial LIKE ? OR responsables LIKE ?
+                        OR reportado_por LIKE ? OR area_equipo LIKE ? OR causa_raiz_identificada LIKE ?)"""
         b = f"%{f_busq}%"
-        params.extend([b,b,b,b])
+        params.extend([b,b,b,b,b,b])
     sql += " ORDER BY fecha_registro DESC"
     docs = db_query(sql, tuple(params))
 
@@ -1626,7 +1738,9 @@ def page_listado():
             "Reportado por": d['reportado_por'],
             "Area": d['area_equipo'] or '—',
             "Fecha": d['fecha_reporte'],
-            "Descripcion": (d['desc_problema_inicial'] or '')[:60]
+            "Descripcion": (d['desc_problema_inicial'] or '')[:60],
+            "Causa Raiz": (d['causa_raiz_identificada'] or '—')[:60] if 'causa_raiz_identificada' in d.keys() else '—',
+            "Creado por": d['creado_por'] if 'creado_por' in d.keys() and d['creado_por'] else '—',
         })
     st.dataframe(pd.DataFrame(tabla_data), use_container_width=True, hide_index=True)
 
@@ -2056,6 +2170,281 @@ def _exportar_plan_accion_pdf(todas_acc, docs_uniq, today):
     return buf.read()
 
 
+# ── Página: Selección de carpeta de almacenamiento ───────────────────────────
+def page_seleccionar_carpeta():
+    st.markdown("""
+    <div class="inst-header-main">
+        <div class="inst-title">🔧 Sistema ACR / AFA — Gestión Documental de Mantenimiento</div>
+        <div class="inst-sub">Paso 1 de 2 · Seleccione su carpeta de almacenamiento</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+    Toda la información de sus ACR y AFA (formularios, análisis, evidencias e
+    histórico) se guarda en **una carpeta que usted elige**. Esa carpeta funciona
+    como su "espacio de trabajo": ahí vivirán la base de datos, los usuarios que
+    usted registre como administrador, y el historial completo de documentos.
+    """)
+
+    with st.form("form_carpeta"):
+        carpeta = st.text_input(
+            "Ruta de la carpeta de almacenamiento",
+            value=st.session_state.get('_ultima_carpeta', str(Path.home() / "ACR_AFA_Data")),
+            help="Ejemplo local/Windows: C:\\ACR_AFA\\Data · Ejemplo Linux/servidor: /home/usuario/ACR_AFA_Data. "
+                 "Si la carpeta no existe, se creará automáticamente."
+        )
+        conectar = st.form_submit_button("📂 Conectar / Crear carpeta", type="primary")
+
+    if conectar:
+        carpeta = (carpeta or "").strip()
+        if not carpeta:
+            st.error("Ingrese una ruta de carpeta valida.")
+        else:
+            try:
+                os.makedirs(carpeta, exist_ok=True)
+                # Prueba de escritura
+                test_file = os.path.join(carpeta, ".write_test")
+                with open(test_file, "w") as f:
+                    f.write("ok")
+                os.remove(test_file)
+                st.session_state['workspace_path'] = carpeta
+                st.session_state['_ultima_carpeta'] = carpeta
+                st.session_state.pop('_db_conn', None)
+                st.session_state.pop('_db_conn_path', None)
+                st.success(f"Carpeta conectada: `{carpeta}`")
+                st.rerun()
+            except Exception as e:
+                st.error(f"No se pudo usar esa carpeta: {e}")
+
+    st.markdown("---")
+    st.markdown("#### 📦 ¿Ya tiene un histórico respaldado (archivo .db)?")
+    st.caption(
+        "Si esta aplicación corre en un servicio en la nube con almacenamiento "
+        "temporal (por ejemplo Streamlit Community Cloud), el disco puede "
+        "reiniciarse. Para no perder su histórico, descargue periódicamente el "
+        "respaldo desde el menú 'Backup / Restaurar' y, si es necesario, "
+        "restáurelo aquí antes de continuar."
+    )
+    restaurar_file = st.file_uploader("Restaurar archivo acr_afa_system.db en la carpeta indicada arriba",
+                                       type=["db"], key="restore_upload_inicial")
+    if restaurar_file is not None:
+        carpeta_dest = (carpeta or st.session_state.get('_ultima_carpeta') or "").strip()
+        if not carpeta_dest:
+            st.warning("Primero indique y conecte la carpeta arriba.")
+        elif st.button("♻️ Restaurar histórico en esa carpeta"):
+            try:
+                os.makedirs(carpeta_dest, exist_ok=True)
+                destino = os.path.join(carpeta_dest, DB_FILENAME)
+                with open(destino, "wb") as f:
+                    f.write(restaurar_file.read())
+                st.session_state['workspace_path'] = carpeta_dest
+                st.session_state.pop('_db_conn', None)
+                st.session_state.pop('_db_conn_path', None)
+                st.success("Histórico restaurado. Conectando...")
+                st.rerun()
+            except Exception as e:
+                st.error(f"No se pudo restaurar el archivo: {e}")
+
+# ── Página: Login ─────────────────────────────────────────────────────────────
+def page_login():
+    cfg = get_empresa_cfg()
+    nombre_emp = cfg.get('nombre_empresa') or 'Sistema ACR / AFA'
+    st.markdown(f"""
+    <div class="inst-header-main">
+        <div class="inst-title">🔧 {nombre_emp}</div>
+        <div class="inst-sub">Paso 2 de 2 · Inicie sesión · Carpeta activa: {st.session_state.get('workspace_path')}</div>
+    </div>""", unsafe_allow_html=True)
+
+    if not existe_algun_usuario():
+        st.info(
+            "Esta carpeta aún no tiene usuarios. Cree la cuenta de **administrador** "
+            "para este espacio de trabajo. Como administrador, podrá luego crear "
+            "el acceso de los demás usuarios."
+        )
+        with st.form("form_primer_admin"):
+            c1, c2 = st.columns(2)
+            u = c1.text_input("Usuario (sin espacios)")
+            n = c2.text_input("Nombre completo")
+            c3, c4 = st.columns(2)
+            p1 = c3.text_input("Contraseña", type="password")
+            p2 = c4.text_input("Confirmar contraseña", type="password")
+            crear = st.form_submit_button("👑 Crear administrador", type="primary")
+        if crear:
+            if not u or not p1:
+                st.error("Usuario y contraseña son obligatorios.")
+            elif p1 != p2:
+                st.error("Las contraseñas no coinciden.")
+            elif len(p1) < 4:
+                st.error("La contraseña debe tener al menos 4 caracteres.")
+            else:
+                try:
+                    crear_usuario(u, p1, nombre_completo=n, rol="admin", creado_por="sistema")
+                    st.success("Administrador creado. Ahora inicie sesión.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+        st.markdown("---")
+        if st.button("⬅️ Cambiar carpeta de almacenamiento"):
+            st.session_state.pop('workspace_path', None)
+            st.rerun()
+        return
+
+    with st.form("form_login"):
+        u = st.text_input("Usuario")
+        p = st.text_input("Contraseña", type="password")
+        ingresar = st.form_submit_button("🔓 Ingresar", type="primary")
+    if ingresar:
+        user = autenticar_usuario(u, p)
+        if user:
+            st.session_state['usuario'] = user
+            st.success(f"Bienvenido, {user.get('nombre_completo') or user.get('username')}.")
+            st.rerun()
+        else:
+            st.error("Usuario o contraseña incorrectos, o el usuario está inactivo.")
+
+    st.markdown("---")
+    if st.button("⬅️ Cambiar carpeta de almacenamiento"):
+        st.session_state.pop('workspace_path', None)
+        st.rerun()
+
+# ── Página: Gestión de Usuarios (solo admin) ─────────────────────────────────
+def page_usuarios():
+    show_header()
+    st.markdown("## 👥 Gestión de Usuarios")
+    st.caption("Como administrador, usted otorga el acceso a este espacio de trabajo (carpeta) "
+               "a las personas que agregue aquí.")
+
+    usuario_actual = st.session_state.get('usuario') or {}
+
+    st.markdown("### ➕ Agregar nuevo usuario")
+    with st.form("form_nuevo_usuario", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        nu_user = c1.text_input("Usuario (sin espacios) *")
+        nu_nombre = c2.text_input("Nombre completo")
+        c3, c4 = st.columns(2)
+        nu_pass = c3.text_input("Contraseña *", type="password")
+        nu_rol = c4.selectbox("Rol", ["usuario", "admin"])
+        nu_area = st.text_input("Área / Cargo (opcional)")
+        agregar = st.form_submit_button("💾 Agregar usuario", type="primary")
+    if agregar:
+        try:
+            crear_usuario(nu_user, nu_pass, nombre_completo=nu_nombre, rol=nu_rol,
+                          area=nu_area, creado_por=usuario_actual.get('username',''))
+            st.success(f"Usuario '{nu_user}' creado correctamente.")
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))
+
+    st.markdown("---")
+    st.markdown("### 📋 Usuarios con acceso a esta carpeta")
+    usuarios = listar_usuarios()
+    if not usuarios:
+        st.info("No hay usuarios registrados.")
+        return
+
+    for u in usuarios:
+        u = dict(u)
+        es_yo = u['username'] == usuario_actual.get('username')
+        with st.expander(
+            f"{'👑' if u['rol']=='admin' else '👤'} **{u['username']}**"
+            f"{' (tú)' if es_yo else ''} — {u.get('nombre_completo') or 'sin nombre'}"
+            f" — {'🟢 Activo' if u['activo'] else '🔴 Inactivo'}"
+        ):
+            c1, c2, c3 = st.columns(3)
+            c1.write(f"**Rol:** {u['rol']}")
+            c1.write(f"**Área:** {u.get('area') or '—'}")
+            c2.write(f"**Creado por:** {u.get('creado_por') or '—'}")
+            c2.write(f"**Alta:** {u.get('fecha_creacion') or '—'}")
+            c3.write(f"**Último acceso:** {u.get('ultimo_acceso') or 'Nunca'}")
+
+            b1, b2, b3, b4 = st.columns(4)
+            # Activar / desactivar
+            if u['activo']:
+                puede_desactivar = not (u['rol'] == 'admin' and contar_admins_activos() <= 1)
+                if b1.button("🔴 Desactivar", key=f"deact_{u['id']}", disabled=not puede_desactivar):
+                    db_run("UPDATE usuarios SET activo=0 WHERE id=?", (u['id'],))
+                    st.rerun()
+                if not puede_desactivar:
+                    st.caption("No se puede desactivar al único administrador activo.")
+            else:
+                if b1.button("🟢 Activar", key=f"act_{u['id']}"):
+                    db_run("UPDATE usuarios SET activo=1 WHERE id=?", (u['id'],))
+                    st.rerun()
+
+            # Cambiar rol
+            nuevo_rol = "usuario" if u['rol'] == "admin" else "admin"
+            puede_cambiar_rol = not (u['rol'] == 'admin' and contar_admins_activos() <= 1)
+            if b2.button(f"↔️ Hacer {nuevo_rol}", key=f"rol_{u['id']}", disabled=not puede_cambiar_rol):
+                db_run("UPDATE usuarios SET rol=? WHERE id=?", (nuevo_rol, u['id']))
+                st.rerun()
+
+            # Resetear contraseña
+            with b3.popover("🔑 Resetear contraseña"):
+                np1 = st.text_input("Nueva contraseña", type="password", key=f"np_{u['id']}")
+                if st.button("Guardar nueva contraseña", key=f"npbtn_{u['id']}"):
+                    if len(np1 or "") < 4:
+                        st.error("Mínimo 4 caracteres.")
+                    else:
+                        cambiar_password(u['username'], np1)
+                        st.success("Contraseña actualizada.")
+
+            # Eliminar
+            puede_eliminar = not es_yo and not (u['rol'] == 'admin' and contar_admins_activos() <= 1)
+            if b4.button("🗑 Eliminar", key=f"del_{u['id']}", disabled=not puede_eliminar):
+                db_run("DELETE FROM usuarios WHERE id=?", (u['id'],))
+                st.rerun()
+
+# ── Página: Backup / Restaurar histórico ─────────────────────────────────────
+def page_backup():
+    show_header()
+    st.markdown("## 💾 Backup / Restaurar histórico")
+    st.markdown(f"**Carpeta de almacenamiento activa:** `{st.session_state.get('workspace_path')}`")
+
+    st.info(
+        "Este archivo contiene **todo** el histórico: documentos ACR/AFA, análisis, "
+        "planes de acción, evidencias fotográficas y usuarios de esta carpeta. "
+        "Descárguelo periódicamente como respaldo, especialmente si la aplicación "
+        "corre en un servicio con almacenamiento temporal."
+    )
+
+    path = workspace_db_path()
+    if path and os.path.exists(path):
+        with open(path, "rb") as f:
+            data = f.read()
+        st.download_button(
+            "⬇️ Descargar respaldo completo (.db)",
+            data,
+            file_name=f"acr_afa_backup_{datetime.date.today().isoformat()}.db",
+            mime="application/octet-stream",
+            type="primary"
+        )
+        st.caption(f"Tamaño actual: {len(data)/1024:.1f} KB")
+    else:
+        st.warning("Aún no hay base de datos generada en esta carpeta.")
+
+    st.markdown("---")
+    st.markdown("### ♻️ Restaurar desde un respaldo")
+    st.caption(
+        "Al restaurar, el archivo subido reemplazará la base de datos actual de "
+        "esta carpeta (documentos, usuarios e histórico). Use esto con cuidado."
+    )
+    up = st.file_uploader("Seleccionar archivo .db de respaldo", type=["db"], key="restore_upload_backup_page")
+    if up is not None and st.button("♻️ Restaurar (reemplaza la data actual)"):
+        try:
+            # Cerrar conexion activa antes de sobrescribir el archivo
+            conn = st.session_state.pop('_db_conn', None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            st.session_state.pop('_db_conn_path', None)
+            with open(path, "wb") as f:
+                f.write(up.read())
+            st.success("Histórico restaurado correctamente.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"No se pudo restaurar: {e}")
+
 # ==============================================================================
 # NAVEGACION PRINCIPAL
 # ==============================================================================
@@ -2068,8 +2457,37 @@ def main():
     if 'doc_tipo' not in st.session_state:
         st.session_state['doc_tipo'] = 'ACR'
 
+    # Paso 1: exigir carpeta de almacenamiento antes de mostrar cualquier dato
+    if not st.session_state.get('workspace_path'):
+        page_seleccionar_carpeta()
+        return
+
+    # Paso 2: exigir inicio de sesion (usuarios del espacio de trabajo activo)
+    if not st.session_state.get('usuario'):
+        page_login()
+        return
+
+    usuario_actual = st.session_state['usuario']
+    es_admin = usuario_actual.get('rol') == 'admin'
+
     # Sidebar
     with st.sidebar:
+        st.markdown(
+            f"**👤 {usuario_actual.get('nombre_completo') or usuario_actual.get('username')}**  \n"
+            f"`{usuario_actual.get('username')}` · {'👑 admin' if es_admin else 'usuario'}"
+        )
+        st.caption(f"📁 {st.session_state.get('workspace_path')}")
+        cs1, cs2 = st.columns(2)
+        if cs1.button("🚪 Salir", use_container_width=True):
+            st.session_state.pop('usuario', None)
+            st.rerun()
+        if cs2.button("🔁 Cambiar carpeta", use_container_width=True):
+            st.session_state.pop('usuario', None)
+            st.session_state.pop('workspace_path', None)
+            st.session_state.pop('_db_conn', None)
+            st.session_state.pop('_db_conn_path', None)
+            st.rerun()
+        st.markdown("---")
         cfg = get_empresa_cfg()
         logo_b = cfg.get('logo_blob')
         if logo_b:
@@ -2114,11 +2532,21 @@ def main():
             st.session_state['pagina'] = 'config'
             st.rerun()
 
+        if es_admin:
+            if st.button("👥 Gestión de Usuarios", use_container_width=True):
+                st.session_state['pagina'] = 'usuarios'
+                st.rerun()
+
+        if st.button("💾 Backup / Restaurar", use_container_width=True):
+            st.session_state['pagina'] = 'backup'
+            st.rerun()
+
         st.markdown("---")
         st.markdown("""
         <small style='color:#adb5bd'>
-        v11.0.0 | ISO 9001 · ISO 14224<br>
+        v12.0.0 | ISO 9001 · ISO 14224<br>
         TPM · RCM · ORICA Standards<br>
+        Multiusuario · Histórico por carpeta<br>
         CAVA — Roger Huamani
         </small>""", unsafe_allow_html=True)
 
@@ -2134,6 +2562,14 @@ def main():
         page_config_empresa()
     elif pagina == 'plan_accion':
         page_plan_accion()
+    elif pagina == 'usuarios':
+        if es_admin:
+            page_usuarios()
+        else:
+            st.error("Solo el administrador puede acceder a esta sección.")
+            page_dashboard()
+    elif pagina == 'backup':
+        page_backup()
     else:
         page_dashboard()
 
