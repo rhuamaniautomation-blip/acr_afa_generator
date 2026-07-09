@@ -551,6 +551,19 @@ class GeminiEngine:
         if not self.is_ready():
             return None
         try:
+            # Importar GenerateContentConfig si está disponible
+            try:
+                from google.genai.types import GenerateContentConfig
+                HAS_CONFIG = True
+            except ImportError:
+                HAS_CONFIG = False
+
+            # Crear configuración de generación
+            if HAS_CONFIG:
+                gen_config = GenerateContentConfig(temperature=temperature)
+            else:
+                gen_config = None
+
             # Construir contenido multimodal si hay archivos adjuntos
             if archivos_adjuntos and len(archivos_adjuntos) > 0:
                 contenido = []
@@ -578,21 +591,33 @@ class GeminiEngine:
                             }
                         })
 
-                # Usar contenido multimodal
-                response = self.client.models.generate_content(
-                    model=self.modelo,
-                    contents=contenido,
-                    generation_config={"temperature": temperature}
-                )
+                # Usar contenido multimodal con la API correcta
+                if gen_config:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=contenido,
+                        config=gen_config
+                    )
+                else:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=contenido
+                    )
                 return response.text
             else:
-                # Llamada solo con texto (comportamiento original)
-                interaction = self.client.interactions.create(
-                    model=self.modelo,
-                    input=prompt,
-                    generation_config={"temperature": temperature}
-                )
-                return interaction.output_text
+                # Llamada solo con texto
+                if gen_config:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=prompt,
+                        config=gen_config
+                    )
+                else:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=prompt
+                    )
+                return response.text
         except Exception as e:
             st.error(f"Error en llamada Gemini: {e}")
             return None
