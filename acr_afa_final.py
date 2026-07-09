@@ -706,20 +706,6 @@ class GeminiEngine:
                     st.error(f"Error en llamada Gemini: {e}")
                     return None
         return None
-"
-                        "**Soluciones:**
-"
-                        "1. Espera 24 horas para que se reinicie la cuota
-"
-                        "2. Obtén una API Key de pago en https://ai.google.dev/pricing
-"
-                        "3. Usa el modo manual para completar los campos")
-            elif '404' in error_msg or 'NOT_FOUND' in error_msg:
-                st.error(f"❌ Modelo no encontrado: {self.modelo}. Verifica la configuración de IA.")
-            else:
-                st.error(f"Error en llamada Gemini: {e}")
-            return None
-
     def generar_acr_completo(self, contexto_problema, tipo='ACR', archivos_adjuntos=None):
         """Genera un ACR/AFA completo a partir del contexto del problema y archivos adjuntos."""
         ia_cfg = get_ia_cfg()
