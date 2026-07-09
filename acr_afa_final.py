@@ -558,7 +558,7 @@ class GeminiEngine:
         'gemini-1.5-flash', 'gemini-1.5-pro'
     ]
 
-    def __init__(self, api_key=None, modelo='gemini-1.5-flash'):
+    def __init__(self, api_key=None, modelo='gemini-3.1-pro'):
         self.api_key = api_key
         self.modelo = self._validar_modelo(modelo)
         self.client = None
@@ -613,98 +613,120 @@ class GeminiEngine:
             return 'bmp'
         return 'jpeg'  # default
 
-    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None, max_retries=3):
-        """Llama a Gemini con retry y backoff. Soporta archivos adjuntos."""
+    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None, max_retries=3, fallback_attempts=None):
+        """Llama a Gemini con retry, backoff y fallback automático de modelos."""
         if not self.is_ready():
             return None
 
         import time
 
-        for attempt in range(max_retries):
-            try:
-                # Importar GenerateContentConfig si está disponible
+        # Inicializar cadena de fallback si no se proporciona
+        if fallback_attempts is None:
+            fallback_attempts = list(self.FALLBACK_CHAIN)
+            # Asegurar que el modelo actual esté primero
+            if self.modelo in fallback_attempts:
+                fallback_attempts.remove(self.modelo)
+            fallback_attempts.insert(0, self.modelo)
+
+        for model_idx, current_model in enumerate(fallback_attempts):
+            for attempt in range(max_retries):
                 try:
-                    from google.genai.types import GenerateContentConfig
-                    HAS_CONFIG = True
-                except ImportError:
-                    HAS_CONFIG = False
+                    # Importar GenerateContentConfig si está disponible
+                    try:
+                        from google.genai.types import GenerateContentConfig
+                        HAS_CONFIG = True
+                    except ImportError:
+                        HAS_CONFIG = False
 
-                # Crear configuración de generación
-                if HAS_CONFIG:
-                    gen_config = GenerateContentConfig(temperature=temperature)
-                else:
-                    gen_config = None
-
-                # Construir contenido multimodal si hay archivos adjuntos
-                if archivos_adjuntos and len(archivos_adjuntos) > 0:
-                    contenido = []
-                    contenido.append({"text": prompt})
-                    for archivo in archivos_adjuntos:
-                        if archivo['tipo'] == 'imagen':
-                            formato = self._detectar_formato_imagen(archivo['bytes'])
-                            b64 = self._imagen_a_base64(archivo['bytes'])
-                            contenido.append({
-                                "inline_data": {
-                                    "mime_type": f"image/{formato}",
-                                    "data": b64
-                                }
-                            })
-                        elif archivo['tipo'] == 'pdf':
-                            b64 = self._imagen_a_base64(archivo['bytes'])
-                            contenido.append({
-                                "inline_data": {
-                                    "mime_type": "application/pdf",
-                                    "data": b64
-                                }
-                            })
-                    if gen_config:
-                        response = self.client.models.generate_content(
-                            model=self.modelo, contents=contenido, config=gen_config
-                        )
+                    # Crear configuración de generación
+                    if HAS_CONFIG:
+                        gen_config = GenerateContentConfig(temperature=temperature)
                     else:
-                        response = self.client.models.generate_content(
-                            model=self.modelo, contents=contenido
-                        )
-                    return response.text
-                else:
-                    if gen_config:
-                        response = self.client.models.generate_content(
-                            model=self.modelo, contents=prompt, config=gen_config
-                        )
+                        gen_config = None
+
+                    # Construir contenido multimodal si hay archivos adjuntos
+                    if archivos_adjuntos and len(archivos_adjuntos) > 0:
+                        contenido = []
+                        contenido.append({"text": prompt})
+                        for archivo in archivos_adjuntos:
+                            if archivo['tipo'] == 'imagen':
+                                formato = self._detectar_formato_imagen(archivo['bytes'])
+                                b64 = self._imagen_a_base64(archivo['bytes'])
+                                contenido.append({
+                                    "inline_data": {
+                                        "mime_type": f"image/{formato}",
+                                        "data": b64
+                                    }
+                                })
+                            elif archivo['tipo'] == 'pdf':
+                                b64 = self._imagen_a_base64(archivo['bytes'])
+                                contenido.append({
+                                    "inline_data": {
+                                        "mime_type": "application/pdf",
+                                        "data": b64
+                                    }
+                                })
+                        if gen_config:
+                            response = self.client.models.generate_content(
+                                model=current_model, contents=contenido, config=gen_config
+                            )
+                        else:
+                            response = self.client.models.generate_content(
+                                model=current_model, contents=contenido
+                            )
+                        return response.text
                     else:
-                        response = self.client.models.generate_content(
-                            model=self.modelo, contents=prompt
-                        )
-                    return response.text
+                        if gen_config:
+                            response = self.client.models.generate_content(
+                                model=current_model, contents=prompt, config=gen_config
+                            )
+                        else:
+                            response = self.client.models.generate_content(
+                                model=current_model, contents=prompt
+                            )
+                        return response.text
 
-            except Exception as e:
-                error_msg = str(e)
-                is_rate_limit = '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower()
-                is_not_found = '404' in error_msg or 'NOT_FOUND' in error_msg
+                except Exception as e:
+                    error_msg = str(e)
+                    is_rate_limit = '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower()
+                    is_not_found = '404' in error_msg or 'NOT_FOUND' in error_msg
 
-                if is_rate_limit and attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) * 5 + 5
-                    st.warning(f"⏳ Cuota excedida. Reintentando en {wait_time}s... (intento {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
-                    continue
-                elif is_rate_limit:
-                    st.error("🚫 **Cuota de Gemini excedida.** Has alcanzado el límite gratuito (20 requests/día por modelo).\n\n"
-                            "**Soluciones:**\n"
-                            "1. Espera 24 horas para reinicio de cuota\n"
-                            "2. Cambia a otro modelo en Configuración IA (ej: gemini-1.5-flash)\n"
-                            "3. Obtén API Key de pago: https://ai.google.dev/pricing\n"
-                            "4. Usa el modo manual para completar los campos")
-                    return None
-                elif is_not_found:
-                    st.error(f"❌ Modelo no encontrado: {self.modelo}. Verifica Configuración IA.")
-                    return None
-                else:
-                    if attempt < max_retries - 1:
-                        st.warning(f"⚠️ Error temporal. Reintentando... ({attempt + 1}/{max_retries})")
-                        time.sleep(2 ** attempt)
+                    if is_rate_limit and attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) * 3 + 2  # 5s, 11s, 26s
+                        st.warning(f"⏳ Modelo {current_model}: cuota excedida. Reintentando en {wait_time}s... (intento {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
                         continue
-                    st.error(f"Error en llamada Gemini: {e}")
-                    return None
+                    elif is_rate_limit:
+                        # Intentar con el siguiente modelo en la cadena de fallback
+                        if model_idx < len(fallback_attempts) - 1:
+                            next_model = fallback_attempts[model_idx + 1]
+                            st.info(f"🔄 Cambiando a modelo alternativo: {next_model} (más cuota gratuita)")
+                            break  # Salir del loop de retry para intentar con el siguiente modelo
+                        else:
+                            # Último modelo, mostrar error final
+                            st.error("🚫 **Cuota excedida en todos los modelos disponibles.**\n\n"
+                                    "**Soluciones:**\n"
+                                    "1. Espera 24 horas para reinicio de cuota\n"
+                                    "2. Obtén API Key de pago: https://ai.google.dev/pricing\n"
+                                    "3. Usa el modo manual para completar los campos")
+                            return None
+                    elif is_not_found:
+                        if model_idx < len(fallback_attempts) - 1:
+                            next_model = fallback_attempts[model_idx + 1]
+                            st.info(f"🔄 Modelo {current_model} no encontrado. Intentando con: {next_model}")
+                            break
+                        else:
+                            st.error(f"❌ Modelo no encontrado: {current_model}. Verifica Configuración IA.")
+                            return None
+                    else:
+                        if attempt < max_retries - 1:
+                            st.warning(f"⚠️ Error temporal con {current_model}. Reintentando... ({attempt + 1}/{max_retries})")
+                            time.sleep(2 ** attempt)
+                            continue
+                        if model_idx < len(fallback_attempts) - 1:
+                            break  # Intentar siguiente modelo
+                        st.error(f"Error en llamada Gemini: {e}")
+                        return None
         return None
     def generar_acr_completo(self, contexto_problema, tipo='ACR', archivos_adjuntos=None):
         """Genera un ACR/AFA completo a partir del contexto del problema y archivos adjuntos."""
