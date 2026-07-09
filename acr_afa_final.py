@@ -439,6 +439,25 @@ def _crear_tablas(conn):
         except Exception:
             pass
     conn.commit()
+    # Migración: corregir modelos inválidos guardados en config_ia
+    try:
+        cur = conn.execute("SELECT id, modelo FROM config_ia WHERE modelo LIKE 'gemini-3.%'")
+        for row in cur.fetchall():
+            modelo_invalido = row['modelo'].lower().strip()
+            mapeo_db = {
+                'gemini-3.5-flash': 'gemini-2.5-flash',
+                'gemini-3.5-pro': 'gemini-2.5-pro',
+                'gemini-3.1-flash': 'gemini-2.5-flash',
+                'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
+                'gemini-3.1-pro': 'gemini-2.5-pro',
+                'gemini-3.0-flash': 'gemini-2.5-flash',
+                'gemini-3.0-pro': 'gemini-2.5-pro',
+            }
+            modelo_corregido = mapeo_db.get(modelo_invalido, 'gemini-2.5-flash')
+            conn.execute("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_corregido, row['id']))
+        conn.commit()
+    except Exception:
+        pass
 
 def db_query(sql, params=()):
     return get_db().execute(sql, params).fetchall()
@@ -477,7 +496,25 @@ def get_empresa_cfg():
 
 def get_ia_cfg():
     row = db_one("SELECT * FROM config_ia LIMIT 1")
-    return dict(row) if row else {}
+    if not row:
+        return {}
+    cfg = dict(row)
+    # Corregir modelo inválido si existe
+    modelo = cfg.get('modelo', '')
+    if modelo and 'gemini-3.' in modelo.lower():
+        mapeo_cfg = {
+            'gemini-3.5-flash': 'gemini-2.5-flash',
+            'gemini-3.5-pro': 'gemini-2.5-pro',
+            'gemini-3.1-flash': 'gemini-2.5-flash',
+            'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
+            'gemini-3.1-pro': 'gemini-2.5-pro',
+            'gemini-3.0-flash': 'gemini-2.5-flash',
+            'gemini-3.0-pro': 'gemini-2.5-pro',
+        }
+        cfg['modelo'] = mapeo_cfg.get(modelo.lower().strip(), 'gemini-2.5-flash')
+        # Actualizar también en la BD
+        db_run("UPDATE config_ia SET modelo=? WHERE id=?", (cfg['modelo'], cfg['id']))
+    return cfg
 
 def save_ia_cfg(cfg_dict):
     existing = db_one("SELECT id FROM config_ia LIMIT 1")
@@ -514,9 +551,16 @@ print("Parte 1 generada correctamente")
 class GeminiEngine:
     """Motor de IA para autocompletar campos ACR/AFA con Gemini."""
 
+    # Modelos válidos soportados por la API de Gemini
+    MODELOS_VALIDOS = [
+        'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro',
+        'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.0-pro',
+        'gemini-1.5-flash', 'gemini-1.5-pro'
+    ]
+
     def __init__(self, api_key=None, modelo='gemini-2.5-flash'):
         self.api_key = api_key
-        self.modelo = modelo
+        self.modelo = self._validar_modelo(modelo)
         self.client = None
         if api_key and GEMINI_AVAILABLE:
             try:
@@ -524,6 +568,29 @@ class GeminiEngine:
                 self.client = genai.Client()
             except Exception as e:
                 st.error(f"Error inicializando Gemini: {e}")
+
+    def _validar_modelo(self, modelo):
+        '''Corrige automáticamente nombres de modelos inválidos.'''
+        if not modelo:
+            return 'gemini-2.5-flash'
+        modelo = modelo.strip().lower()
+        # Si ya es válido, retornar tal cual
+        if modelo in self.MODELOS_VALIDOS:
+            return modelo
+        # Mapear modelos inválidos conocidos
+        mapeo = {
+            'gemini-3.5-flash': 'gemini-2.5-flash',
+            'gemini-3.5-pro': 'gemini-2.5-pro',
+            'gemini-3.1-flash': 'gemini-2.5-flash',
+            'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
+            'gemini-3.1-pro': 'gemini-2.5-pro',
+            'gemini-3.0-flash': 'gemini-2.5-flash',
+            'gemini-3.0-pro': 'gemini-2.5-pro',
+        }
+        if modelo in mapeo:
+            return mapeo[modelo]
+        # Si no está en la lista de válidos ni en el mapeo, usar default
+        return 'gemini-2.5-flash'
 
     def is_ready(self):
         return self.client is not None and GEMINI_AVAILABLE
@@ -2384,6 +2451,12 @@ def page_config_ia():
     st.markdown("Configure la API de Gemini y los parametros de generacion de texto.")
 
     ia_cfg = get_ia_cfg()
+    # Asegurar que el modelo guardado sea válido
+    modelo_guardado = ia_cfg.get('modelo', 'gemini-2.5-flash')
+    if 'gemini-3.' in modelo_guardado.lower():
+        modelo_guardado = 'gemini-2.5-flash'
+        ia_cfg['modelo'] = modelo_guardado
+        db_run("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_guardado, ia_cfg['id']))
 
     with st.form("form_ia"):
         st.markdown("**API Key de Gemini**")
