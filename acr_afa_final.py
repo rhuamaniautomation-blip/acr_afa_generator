@@ -558,7 +558,18 @@ class GeminiEngine:
         'gemini-1.5-flash', 'gemini-1.5-pro'
     ]
 
-    def __init__(self, api_key=None, modelo='gemini-3.1-pro'):
+    # Cadena de fallback para cuando un modelo falla (cuota excedida, no encontrado, etc.)
+    # Ordenados de mayor a menor disponibilidad gratuita
+    FALLBACK_CHAIN = [
+        'gemini-1.5-flash',      # Más cuota gratuita, siempre disponible
+        'gemini-2.0-flash',      # Buena alternativa gratuita
+        'gemini-2.0-flash-lite', # Muy económico
+        'gemini-1.5-pro',        # Mayor capacidad
+        'gemini-2.5-pro',        # Más avanzado (puede tener menos cuota)
+        'gemini-2.5-flash-lite', # Eficiente
+    ]
+
+    def __init__(self, api_key=None, modelo='gemini-1.5-flash'):
         self.api_key = api_key
         self.modelo = self._validar_modelo(modelo)
         self.client = None
