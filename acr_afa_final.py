@@ -528,26 +528,100 @@ class GeminiEngine:
     def is_ready(self):
         return self.client is not None and GEMINI_AVAILABLE
 
-    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3):
-        """Llama a Gemini con el prompt dado."""
+    def _imagen_a_base64(self, bytes_img):
+        """Convierte bytes de imagen a base64 para enviar a Gemini."""
+        return base64.b64encode(bytes_img).decode('utf-8')
+
+    def _detectar_formato_imagen(self, bytes_img):
+        """Detecta el formato de imagen a partir de los bytes."""
+        if bytes_img[:8] == b'\x89PNG\r\n\x1a\n':
+            return 'png'
+        elif bytes_img[:2] == b'\xff\xd8':
+            return 'jpeg'
+        elif bytes_img[:4] == b'GIF8':
+            return 'gif'
+        elif bytes_img[:4] == b'RIFF' and bytes_img[8:12] == b'WEBP':
+            return 'webp'
+        elif bytes_img[:4] == b'\x42\x4d':
+            return 'bmp'
+        return 'jpeg'  # default
+
+    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None):
+        """Llama a Gemini con el prompt dado, opcionalmente con archivos adjuntos (imagenes/PDF)."""
         if not self.is_ready():
             return None
         try:
-            interaction = self.client.interactions.create(
-                model=self.modelo,
-                input=prompt,
-                generation_config={"temperature": temperature}
-            )
-            return interaction.output_text
+            # Construir contenido multimodal si hay archivos adjuntos
+            if archivos_adjuntos and len(archivos_adjuntos) > 0:
+                contenido = []
+                # Agregar el prompt de texto primero
+                contenido.append({"text": prompt})
+
+                # Agregar cada archivo adjunto
+                for archivo in archivos_adjuntos:
+                    if archivo['tipo'] == 'imagen':
+                        formato = self._detectar_formato_imagen(archivo['bytes'])
+                        b64 = self._imagen_a_base64(archivo['bytes'])
+                        contenido.append({
+                            "inline_data": {
+                                "mime_type": f"image/{formato}",
+                                "data": b64
+                            }
+                        })
+                    elif archivo['tipo'] == 'pdf':
+                        # Para PDF, Gemini puede procesar texto extraido o el PDF directo
+                        b64 = self._imagen_a_base64(archivo['bytes'])
+                        contenido.append({
+                            "inline_data": {
+                                "mime_type": "application/pdf",
+                                "data": b64
+                            }
+                        })
+
+                # Usar contenido multimodal
+                response = self.client.models.generate_content(
+                    model=self.modelo,
+                    contents=contenido,
+                    generation_config={"temperature": temperature}
+                )
+                return response.text
+            else:
+                # Llamada solo con texto (comportamiento original)
+                interaction = self.client.interactions.create(
+                    model=self.modelo,
+                    input=prompt,
+                    generation_config={"temperature": temperature}
+                )
+                return interaction.output_text
         except Exception as e:
             st.error(f"Error en llamada Gemini: {e}")
             return None
 
-    def generar_acr_completo(self, contexto_problema, tipo='ACR'):
-        """Genera un ACR/AFA completo a partir del contexto del problema."""
+    def generar_acr_completo(self, contexto_problema, tipo='ACR', archivos_adjuntos=None):
+        """Genera un ACR/AFA completo a partir del contexto del problema y archivos adjuntos."""
         ia_cfg = get_ia_cfg()
         estilo = ia_cfg.get('estilo_redaccion', 'tecnico_profesional')
         detalle = ia_cfg.get('nivel_detalle', 'detallado')
+
+        # Construir instrucciones sobre archivos adjuntos
+        instrucciones_archivos = ""
+        if archivos_adjuntos and len(archivos_adjuntos) > 0:
+            tipos_archivos = []
+            for arch in archivos_adjuntos:
+                if arch['tipo'] == 'imagen':
+                    tipos_archivos.append(f"imagen ({arch.get('nombre', 'foto')})")
+                elif arch['tipo'] == 'pdf':
+                    tipos_archivos.append(f"PDF ({arch.get('nombre', 'documento')})")
+            instrucciones_archivos = f"""
+        ADEMAS, se han adjuntado los siguientes archivos para tu analisis visual/documental: {', '.join(tipos_archivos)}.
+        Analiza cuidadosamente estas imagenes/documentos adjuntos para:
+        - Identificar componentes, equipos, condiciones visibles en las fotos
+        - Leer procedimientos, manuales o diagramas en los PDFs adjuntos
+        - Correlacionar lo que ves en las imagenes con el contexto descrito
+        - Identificar posibles causas visibles (desgaste, corrosion, fugas, daños, etc.)
+        - Extraer datos tecnicos relevantes de los documentos adjuntos
+        - Usar la informacion visual y documental para fundamentar mejor tus analisis de 5W+2H y 5 Porques
+        """
 
         system_prompt = f"""Eres un experto en ingenieria mecatronica con 20 anos de experiencia en mantenimiento industrial, 
         especializado en Analisis de Causa Raiz (ACR) y Analisis de Fallas (AFA) bajo normativas ISO 9001, ISO 14224, TPM y RCM.
@@ -613,6 +687,7 @@ class GeminiEngine:
         """
 
         prompt = f"""{system_prompt}
+        {instrucciones_archivos}
 
         CONTEXTO DEL PROBLEMA (descrito por el usuario):
         {contexto_problema}
@@ -623,7 +698,7 @@ class GeminiEngine:
         con parrafos bien desarrollados, justificaciones tecnicas y analisis profundo como un especialista
         en ingenieria mecatronica lo haria."""
 
-        respuesta = self._call_gemini(prompt, temperature=0.3)
+        respuesta = self._call_gemini(prompt, temperature=0.3, archivos_adjuntos=archivos_adjuntos)
         if not respuesta:
             return None
 
@@ -1403,6 +1478,46 @@ def page_form():
             key="contexto_ia_input"
         )
 
+        # ── ARCHIVOS ADJUNTOS PARA LA IA ──
+        st.markdown("---")
+        st.markdown("### 📎 Adjuntar Archivos para Analisis de la IA")
+        st.caption("Suba fotos del problema, manuales tecnicos, procedimientos, diagramas, o cualquier documento que ayude a la IA a entender mejor el contexto.")
+
+        archivos_ia = st.file_uploader(
+            "Seleccionar imagenes o PDFs (fotos del problema, manuales, procedimientos, diagramas)",
+            type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'pdf'],
+            accept_multiple_files=True,
+            key="archivos_ia_uploader"
+        )
+
+        # Mostrar preview de archivos adjuntos
+        if archivos_ia:
+            cols_preview = st.columns(min(len(archivos_ia), 4))
+            archivos_procesados = []
+            for i, archivo in enumerate(archivos_ia):
+                bytes_archivo = archivo.read()
+                tipo_archivo = 'imagen' if archivo.type.startswith('image/') else 'pdf'
+                archivos_procesados.append({
+                    'bytes': bytes_archivo,
+                    'tipo': tipo_archivo,
+                    'nombre': archivo.name,
+                    'mime': archivo.type
+                })
+                with cols_preview[i % 4]:
+                    if tipo_archivo == 'imagen':
+                        try:
+                            img = Image.open(io.BytesIO(bytes_archivo))
+                            st.image(img, caption=f"📷 {archivo.name}", use_container_width=True)
+                        except Exception:
+                            st.info(f"📷 {archivo.name}")
+                    else:
+                        st.info(f"📄 {archivo.name} (PDF)")
+            # Guardar en session state para uso posterior
+            st.session_state['ia_archivos_adjuntos'] = archivos_procesados
+        else:
+            st.session_state['ia_archivos_adjuntos'] = []
+
+        st.markdown("---")
         col_gen, col_cfg = st.columns([1, 3])
         generar_ia = col_gen.button("🤖 GENERAR DOCUMENTO CON IA", type="primary", use_container_width=True)
 
@@ -1415,9 +1530,12 @@ def page_form():
             elif not contexto_ia.strip():
                 st.error("❌ Debe describir el problema antes de generar.")
             else:
-                with st.spinner("🤖 La IA esta analizando el problema y generando el documento completo... Esto puede tomar 30-60 segundos."):
+                archivos_adjuntos = st.session_state.get('ia_archivos_adjuntos', [])
+                num_archivos = len(archivos_adjuntos)
+                mensaje_procesando = f"🤖 La IA esta analizando el problema y {num_archivos} archivo(s) adjunto(s)... Esto puede tomar 30-90 segundos." if num_archivos > 0 else "🤖 La IA esta analizando el problema y generando el documento completo... Esto puede tomar 30-60 segundos."
+                with st.spinner(mensaje_procesando):
                     gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-3.5-flash'))
-                    resultado = gemini.generar_acr_completo(contexto_ia, tipo)
+                    resultado = gemini.generar_acr_completo(contexto_ia, tipo, archivos_adjuntos=archivos_adjuntos)
 
                 if resultado:
                     st.session_state['ia_resultado'] = resultado
