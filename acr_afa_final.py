@@ -743,6 +743,10 @@ class GeminiEngine:
             "cuando": "...",
             "cual": "...",
             "problema_enfocado": "...",
+            "causa_raiz_identificada": "...",
+            "verificacion_causa": "...",
+            "evidencia_causa": "...",
+            "observaciones_cierre": "...",
             "ramas_why_why": [
                 {{
                     "definicion": "...",
@@ -1665,15 +1669,29 @@ def page_form():
             if v:
                 campos_ia[k] = procesar_texto_final(v)
 
+        # Campos de cierre
+        campos_cierre = {
+            'causa_raiz_identificada': ia_resultado.get('causa_raiz_identificada', ''),
+            'verificacion_causa': ia_resultado.get('verificacion_causa', ''),
+            'evidencia_causa': ia_resultado.get('evidencia_causa', ''),
+            'observaciones_cierre': ia_resultado.get('observaciones_cierre', ''),
+        }
+        for k, v in campos_cierre.items():
+            if v:
+                campos_cierre[k] = procesar_texto_final(v)
+
         db_run("""UPDATE documentos SET
             desc_problema_inicial=?, que_contexto=?, como_ocurre=?,
             quien=?, donde=?, cuanto=?, cuando=?, cual=?,
-            problema_enfocado=?, ultima_modificacion=CURRENT_TIMESTAMP
+            problema_enfocado=?, causa_raiz_identificada=?, verificacion_causa=?,
+            evidencia_causa=?, observaciones_cierre=?, ultima_modificacion=CURRENT_TIMESTAMP
             WHERE codigo=?""",
             (campos_ia['desc_problema_inicial'], campos_ia['que_contexto'],
              campos_ia['como_ocurre'], campos_ia['quien'], campos_ia['donde'],
              campos_ia['cuanto'], campos_ia['cuando'], campos_ia['cual'],
-             campos_ia['problema_enfocado'], codigo))
+             campos_ia['problema_enfocado'], campos_cierre['causa_raiz_identificada'],
+             campos_cierre['verificacion_causa'], campos_cierre['evidencia_causa'],
+             campos_cierre['observaciones_cierre'], codigo))
 
         for i, rama in enumerate(ia_resultado.get('ramas_why_why', []), 1):
             rama_corregida = {k: procesar_texto_final(v) if isinstance(v, str) else v 
@@ -1716,11 +1734,16 @@ def page_form():
         del st.session_state['ia_codigo']
         del st.session_state['ia_tipo']
 
+        st.session_state['ia_aplicado_' + codigo] = True
+        st.success("✅ Campos de IA aplicados. Puede editarlos manualmente en las pestanas.")
+        st.rerun()
+
+    # ── Recargar datos si se aplicó IA ────────────────────────────────────────
+    if st.session_state.get('ia_aplicado_' + codigo):
         row = db_one("SELECT * FROM documentos WHERE codigo=?", (codigo,))
         if row:
             d = dict(row)
-        st.success("✅ Campos de IA aplicados. Puede editarlos manualmente en las pestanas.")
-        st.rerun()
+        del st.session_state['ia_aplicado_' + codigo]
 
     # ── TABS ──────────────────────────────────────────────────────────────────
     if tipo == 'ACR':
