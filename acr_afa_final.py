@@ -624,8 +624,12 @@ class GeminiEngine:
             return 'bmp'
         return 'jpeg'  # default
 
-    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None, max_retries=3, fallback_attempts=None):
-        """Llama a Gemini con retry, backoff y fallback automático de modelos."""
+    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None, max_retries=2, fallback_attempts=None):
+        """Llama a Gemini con retry, backoff y fallback automático de modelos.
+
+        Mejorado para manejar cuotas agotadas (free tier) y modelos no disponibles.
+        Usa alias -latest como último recurso para evitar problemas de sincronización.
+        """
         if not self.is_ready():
             return None
 
@@ -638,6 +642,12 @@ class GeminiEngine:
             if self.modelo in fallback_attempts:
                 fallback_attempts.remove(self.modelo)
             fallback_attempts.insert(0, self.modelo)
+            # Agregar alias -latest como último recurso (evita problemas de sincronización de modelos)
+            fallback_attempts.append('gemini-flash-latest')
+            fallback_attempts.append('gemini-pro-latest')
+
+        rate_limit_count = 0  # Contador de cuotas agotadas
+        not_found_count = 0   # Contador de modelos no encontrados
 
         for model_idx, current_model in enumerate(fallback_attempts):
             for attempt in range(max_retries):
@@ -699,46 +709,100 @@ class GeminiEngine:
 
                 except Exception as e:
                     error_msg = str(e)
-                    is_rate_limit = '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower()
-                    is_not_found = '404' in error_msg or 'NOT_FOUND' in error_msg
+                    is_rate_limit = '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower() or 'rate limit' in error_msg.lower()
+                    is_not_found = '404' in error_msg or 'NOT_FOUND' in error_msg or 'not found' in error_msg.lower()
+                    is_auth_error = '403' in error_msg or 'PERMISSION_DENIED' in error_msg or 'API key' in error_msg or 'Unauthorized' in error_msg
 
-                    if is_rate_limit and attempt < max_retries - 1:
-                        wait_time = (2 ** attempt) * 3 + 2  # 5s, 11s, 26s
-                        st.warning(f"⏳ Modelo {current_model}: cuota excedida. Reintentando en {wait_time}s... (intento {attempt + 1}/{max_retries})")
-                        time.sleep(wait_time)
-                        continue
-                    elif is_rate_limit:
-                        # Intentar con el siguiente modelo en la cadena de fallback
-                        if model_idx < len(fallback_attempts) - 1:
-                            next_model = fallback_attempts[model_idx + 1]
-                            st.info(f"🔄 Cambiando a modelo alternativo: {next_model} (más cuota gratuita)")
-                            break  # Salir del loop de retry para intentar con el siguiente modelo
+                    if is_rate_limit:
+                        rate_limit_count += 1
+                        if attempt < max_retries - 1:
+                            wait_time = (2 ** attempt) * 2 + 1  # 3s, 7s (más rápido que antes)
+                            st.warning(f"⏳ Modelo {current_model}: cuota excedida (free tier). Reintentando en {wait_time}s... (intento {attempt + 1}/{max_retries})")
+                            time.sleep(wait_time)
+                            continue
                         else:
-                            # Último modelo, mostrar error final
-                            st.error("🚫 **Cuota excedida en todos los modelos disponibles.**\n\n"
-                                    "**Soluciones:**\n"
-                                    "1. Espera 24 horas para reinicio de cuota\n"
-                                    "2. Obtén API Key de pago: https://ai.google.dev/pricing\n"
-                                    "3. Usa el modo manual para completar los campos")
-                            return None
+                            # Intentar con el siguiente modelo en la cadena de fallback
+                            if model_idx < len(fallback_attempts) - 1:
+                                next_model = fallback_attempts[model_idx + 1]
+                                st.info(f"🔄 Cambiando a modelo alternativo: {next_model}")
+                                break  # Salir del loop de retry para intentar con el siguiente modelo
+                            else:
+                                # Último modelo, mostrar error final
+                                pass  # Se maneja después del loop
+
                     elif is_not_found:
+                        not_found_count += 1
                         if model_idx < len(fallback_attempts) - 1:
                             next_model = fallback_attempts[model_idx + 1]
-                            st.info(f"🔄 Modelo {current_model} no encontrado. Intentando con: {next_model}")
+                            st.info(f"🔄 Modelo {current_model} no disponible. Intentando con: {next_model}")
                             break
                         else:
-                            st.error(f"❌ Modelo no encontrado: {current_model}. Verifica Configuración IA.")
-                            return None
+                            pass  # Se maneja después del loop
+
+                    elif is_auth_error:
+                        st.error(f"❌ Error de autenticación con la API de Gemini. Verifica tu API Key en Configuración IA.")
+                        return None
+
                     else:
+                        # Error temporal u otro error
                         if attempt < max_retries - 1:
                             st.warning(f"⚠️ Error temporal con {current_model}. Reintentando... ({attempt + 1}/{max_retries})")
                             time.sleep(2 ** attempt)
                             continue
                         if model_idx < len(fallback_attempts) - 1:
                             break  # Intentar siguiente modelo
-                        st.error(f"Error en llamada Gemini: {e}")
-                        return None
+                        # Último modelo, error final
+                        pass  # Se maneja después del loop
+
+        # Si llegamos aquí, TODOS los modelos fallaron
+        if rate_limit_count >= len(fallback_attempts) * max_retries:
+            # Todos fallaron por cuota agotada
+            st.error("""
+🚫 **Cuota agotada en TODOS los modelos de Gemini**
+
+Tu API Key está en el **plan gratuito (free tier)** y ha alcanzado el límite de uso diario.
+
+**Soluciones:**
+1. **Espera 24 horas** para que se reinicie la cuota gratuita
+2. **Configura facturación** en Google AI Studio para obtener límites más altos
+3. **Usa el modo manual** para completar los campos del ACR/AFA sin IA
+
+📊 Límites típicos del free tier: 60 RPM / 1,000 RPD (requests por día)
+💳 Más info: https://ai.google.dev/pricing
+            """)
+        elif not_found_count >= len(fallback_attempts):
+            # Todos fallaron por modelo no encontrado
+            st.error("""
+❌ **Ningún modelo de Gemini está disponible con tu API Key**
+
+Esto suele ocurrir cuando:
+- La API Key es nueva y aún no tiene acceso a los modelos
+- Hay un problema de sincronización entre Google AI Studio y la API
+- El proyecto no tiene la API "Generative Language API" habilitada
+
+**Soluciones:**
+1. Ve a https://aistudio.google.com/app/apikey y genera una nueva API Key
+2. Asegúrate de que la API "Generative Language API" esté habilitada en tu proyecto de Google Cloud
+3. Espera 10-15 minutos después de crear la API Key antes de usarla
+4. Intenta con el alias `gemini-flash-latest` en lugar de nombres de versión específica
+            """)
+        else:
+            # Error mixto o desconocido
+            st.error(f"""
+❌ **No se pudo conectar con ningún modelo de Gemini**
+
+Se intentaron {len(fallback_attempts)} modelos alternativos sin éxito.
+
+**Posibles causas:**
+- Problemas de red o conectividad
+- API Key inválida o revocada
+- Todos los modelos están temporalmente fuera de servicio
+
+**Solución:** Verifica tu API Key en Configuración IA > Configuración de IA, o usa el modo manual.
+            """)
+
         return None
+
     def generar_acr_completo(self, contexto_problema, tipo='ACR', archivos_adjuntos=None):
         """Genera un ACR/AFA completo a partir del contexto del problema y archivos adjuntos."""
         ia_cfg = get_ia_cfg()
@@ -1690,7 +1754,26 @@ def page_form():
                     st.success("✅ Documento generado por IA. Revise y ajuste los campos en las pestanas.")
                     st.rerun()
                 else:
-                    st.error("❌ La IA no pudo generar el documento. Verifique su API Key e intente de nuevo.")
+                    st.error("""
+❌ **La IA no pudo generar el documento automáticamente.**
+
+Esto suele ocurrir por una de estas razones:
+
+1. **Cuota agotada** — Tu API Key gratuita alcanzó el límite diario (1,000 requests/día). 
+   → Espera 24 horas o configura facturación en Google AI Studio.
+
+2. **API Key inválida** — La clave no tiene acceso a los modelos de Gemini.
+   → Genera una nueva en https://aistudio.google.com/app/apikey
+
+3. **Problema de red** — Error temporal de conexión con los servidores de Google.
+   → Intenta de nuevo en unos minutos.
+
+**💡 Puedes continuar completando el documento manualmente.** 
+Tu descripción del problema se ha guardado. Ve a las pestañas para ingresar los datos.
+                    """)
+                    # Guardar el contexto del usuario para que no lo pierda
+                    st.session_state['contexto_manual'] = contexto_ia
+                    st.session_state['ia_fallo'] = True
 
     # Aplicar resultados de IA
     ia_resultado = st.session_state.get('ia_resultado')
@@ -1876,6 +1959,9 @@ def page_form():
             _save_doc_general(codigo, tipo, es_nuevo, locals())
             st.session_state['doc_codigo'] = codigo
             st.session_state['es_nuevo_guardado'] = False
+            # Limpiar flags de fallo de IA para no mostrar mensajes obsoletos
+            st.session_state.pop('ia_fallo', None)
+            st.session_state.pop('contexto_manual', None)
             st.success(f"✅ Guardado correctamente. Codigo: `{codigo}`")
             st.rerun()
 
@@ -1951,8 +2037,14 @@ print("Parte 4 generada correctamente")
 def _tab_problema(codigo, d, tipo, es_nuevo):
     st.markdown('<div class="seccion-band">2. DESCRIPCION DEL PROBLEMA</div>', unsafe_allow_html=True)
 
+    # Si la IA falló y hay contexto manual guardado, pre-rellenar la descripción
+    desc_default = d.get('desc_problema_inicial','')
+    if not desc_default and st.session_state.get('ia_fallo') and st.session_state.get('contexto_manual'):
+        desc_default = st.session_state.get('contexto_manual','')
+        st.info("💡 El contexto que describiste se ha pre-rellenado aquí. Puedes editarlo y completar el resto del formulario manualmente.")
+
     desc_inicial = st.text_area("1. Descripcion del problema inicial",
-        value=d.get('desc_problema_inicial',''), height=100, key="dpi")
+        value=desc_default, height=100, key="dpi")
 
     col_corr1, col_corr2 = st.columns([1, 5])
     if col_corr1.button("✏️ Corregir", key="corr_desc"):
@@ -2986,6 +3078,8 @@ def main():
         if st.button("🏠 Dashboard", use_container_width=True):
             st.session_state['pagina'] = 'dashboard'
             st.session_state['doc_codigo'] = None
+            st.session_state.pop('ia_fallo', None)
+            st.session_state.pop('contexto_manual', None)
             st.rerun()
 
         if st.button("📋 Todos los Documentos", use_container_width=True):
