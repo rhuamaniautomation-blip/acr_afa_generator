@@ -408,7 +408,7 @@ def _crear_tablas(conn):
         """CREATE TABLE IF NOT EXISTS config_ia (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             api_key TEXT,
-            modelo TEXT DEFAULT 'gemini-3.5-flash',
+            modelo TEXT DEFAULT 'gemini-2.5-flash',
             temperatura REAL DEFAULT 0.3,
             max_tokens INTEGER DEFAULT 4096,
             idioma TEXT DEFAULT 'es',
@@ -487,7 +487,7 @@ def save_ia_cfg(cfg_dict):
             idioma=?, estilo_redaccion=?, nivel_detalle=?,
             activar_correccion=?, activar_humanizar=?, prompt_personalizado=?
             WHERE id=?""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-3.5-flash'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-2.5-flash'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
@@ -498,7 +498,7 @@ def save_ia_cfg(cfg_dict):
             (api_key,modelo,temperatura,max_tokens,idioma,estilo_redaccion,
              nivel_detalle,activar_correccion,activar_humanizar,prompt_personalizado)
             VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-3.5-flash'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-2.5-flash'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
@@ -514,7 +514,7 @@ print("Parte 1 generada correctamente")
 class GeminiEngine:
     """Motor de IA para autocompletar campos ACR/AFA con Gemini."""
 
-    def __init__(self, api_key=None, modelo='gemini-3.5-flash'):
+    def __init__(self, api_key=None, modelo='gemini-2.5-flash'):
         self.api_key = api_key
         self.modelo = modelo
         self.client = None
@@ -817,7 +817,7 @@ def corregir_texto(texto, usar_ia=True):
 
     if usar_ia:
         api_key = ia_cfg.get('api_key', '')
-        modelo = ia_cfg.get('modelo', 'gemini-3.5-flash')
+        modelo = ia_cfg.get('modelo', 'gemini-2.5-flash')
         if api_key:
             gemini = GeminiEngine(api_key, modelo)
             if gemini.is_ready():
@@ -837,7 +837,7 @@ def humanizar_texto(texto):
         return texto
 
     api_key = ia_cfg.get('api_key', '')
-    modelo = ia_cfg.get('modelo', 'gemini-3.5-flash')
+    modelo = ia_cfg.get('modelo', 'gemini-2.5-flash')
     if api_key:
         gemini = GeminiEngine(api_key, modelo)
         if gemini.is_ready():
@@ -1547,7 +1547,7 @@ def page_form():
         generar_ia = col_gen.button("🤖 GENERAR DOCUMENTO CON IA", type="primary", use_container_width=True)
 
         with col_cfg:
-            st.caption(f"Modelo: {ia_cfg.get('modelo','gemini-3.5-flash')} | Correccion: {'✅' if ia_cfg.get('activar_correccion') else '❌'} | Humanizar: {'✅' if ia_cfg.get('activar_humanizar') else '❌'}")
+            st.caption(f"Modelo: {ia_cfg.get('modelo','gemini-2.5-flash')} | Correccion: {'✅' if ia_cfg.get('activar_correccion') else '❌'} | Humanizar: {'✅' if ia_cfg.get('activar_humanizar') else '❌'}")
 
         if generar_ia:
             if not api_key:
@@ -1559,7 +1559,7 @@ def page_form():
                 num_archivos = len(archivos_adjuntos)
                 mensaje_procesando = f"🤖 La IA esta analizando el problema y {num_archivos} archivo(s) adjunto(s)... Esto puede tomar 30-90 segundos." if num_archivos > 0 else "🤖 La IA esta analizando el problema y generando el documento completo... Esto puede tomar 30-60 segundos."
                 with st.spinner(mensaje_procesando):
-                    gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-3.5-flash'))
+                    gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-2.5-flash'))
                     resultado = gemini.generar_acr_completo(contexto_ia, tipo, archivos_adjuntos=archivos_adjuntos)
 
                 if resultado:
@@ -2395,9 +2395,9 @@ def page_config_ia():
         st.markdown("**Parametros del Modelo**")
         c1, c2, c3 = st.columns(3)
         modelo = c1.selectbox("Modelo Gemini",
-            ['gemini-3.5-flash', 'gemini-3.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'],
-            index=['gemini-3.5-flash', 'gemini-3.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'].index(
-                ia_cfg.get('modelo','gemini-3.5-flash')) if ia_cfg.get('modelo') in ['gemini-3.5-flash', 'gemini-3.5-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'] else 0)
+            ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+            index=['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'].index(
+                ia_cfg.get('modelo','gemini-2.5-flash')) if ia_cfg.get('modelo') in ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'] else 0)
         temperatura = c2.slider("Temperatura (creatividad)", 0.0, 1.0, 
             float(ia_cfg.get('temperatura',0.3)), 0.1,
             help="0 = muy preciso, 1 = muy creativo")
