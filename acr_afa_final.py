@@ -408,7 +408,7 @@ def _crear_tablas(conn):
         """CREATE TABLE IF NOT EXISTS config_ia (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             api_key TEXT,
-            modelo TEXT DEFAULT 'gemini-2.5-flash',
+            modelo TEXT DEFAULT 'gemini-1.5-flash',
             temperatura REAL DEFAULT 0.3,
             max_tokens INTEGER DEFAULT 4096,
             idioma TEXT DEFAULT 'es',
@@ -445,15 +445,15 @@ def _crear_tablas(conn):
         for row in cur.fetchall():
             modelo_invalido = row['modelo'].lower().strip()
             mapeo_db = {
-                'gemini-3.5-flash': 'gemini-2.5-flash',
+                'gemini-3.5-flash': 'gemini-1.5-flash',
                 'gemini-3.5-pro': 'gemini-2.5-pro',
-                'gemini-3.1-flash': 'gemini-2.5-flash',
+                'gemini-3.1-flash': 'gemini-1.5-flash',
                 'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
                 'gemini-3.1-pro': 'gemini-2.5-pro',
-                'gemini-3.0-flash': 'gemini-2.5-flash',
+                'gemini-3.0-flash': 'gemini-1.5-flash',
                 'gemini-3.0-pro': 'gemini-2.5-pro',
             }
-            modelo_corregido = mapeo_db.get(modelo_invalido, 'gemini-2.5-flash')
+            modelo_corregido = mapeo_db.get(modelo_invalido, 'gemini-1.5-flash')
             conn.execute("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_corregido, row['id']))
         conn.commit()
     except Exception:
@@ -503,15 +503,15 @@ def get_ia_cfg():
     modelo = cfg.get('modelo', '')
     if modelo and 'gemini-3.' in modelo.lower():
         mapeo_cfg = {
-            'gemini-3.5-flash': 'gemini-2.5-flash',
+            'gemini-3.5-flash': 'gemini-1.5-flash',
             'gemini-3.5-pro': 'gemini-2.5-pro',
-            'gemini-3.1-flash': 'gemini-2.5-flash',
+            'gemini-3.1-flash': 'gemini-1.5-flash',
             'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
             'gemini-3.1-pro': 'gemini-2.5-pro',
-            'gemini-3.0-flash': 'gemini-2.5-flash',
+            'gemini-3.0-flash': 'gemini-1.5-flash',
             'gemini-3.0-pro': 'gemini-2.5-pro',
         }
-        cfg['modelo'] = mapeo_cfg.get(modelo.lower().strip(), 'gemini-2.5-flash')
+        cfg['modelo'] = mapeo_cfg.get(modelo.lower().strip(), 'gemini-1.5-flash')
         # Actualizar también en la BD
         db_run("UPDATE config_ia SET modelo=? WHERE id=?", (cfg['modelo'], cfg['id']))
     return cfg
@@ -524,7 +524,7 @@ def save_ia_cfg(cfg_dict):
             idioma=?, estilo_redaccion=?, nivel_detalle=?,
             activar_correccion=?, activar_humanizar=?, prompt_personalizado=?
             WHERE id=?""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-2.5-flash'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-1.5-flash'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
@@ -535,7 +535,7 @@ def save_ia_cfg(cfg_dict):
             (api_key,modelo,temperatura,max_tokens,idioma,estilo_redaccion,
              nivel_detalle,activar_correccion,activar_humanizar,prompt_personalizado)
             VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-2.5-flash'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-1.5-flash'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
@@ -553,12 +553,12 @@ class GeminiEngine:
 
     # Modelos válidos soportados por la API de Gemini
     MODELOS_VALIDOS = [
-        'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro',
+        'gemini-1.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro',
         'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.0-pro',
         'gemini-1.5-flash', 'gemini-1.5-pro'
     ]
 
-    def __init__(self, api_key=None, modelo='gemini-2.5-flash'):
+    def __init__(self, api_key=None, modelo='gemini-1.5-flash'):
         self.api_key = api_key
         self.modelo = self._validar_modelo(modelo)
         self.client = None
@@ -572,25 +572,25 @@ class GeminiEngine:
     def _validar_modelo(self, modelo):
         '''Corrige automáticamente nombres de modelos inválidos.'''
         if not modelo:
-            return 'gemini-2.5-flash'
+            return 'gemini-1.5-flash'
         modelo = modelo.strip().lower()
         # Si ya es válido, retornar tal cual
         if modelo in self.MODELOS_VALIDOS:
             return modelo
         # Mapear modelos inválidos conocidos
         mapeo = {
-            'gemini-3.5-flash': 'gemini-2.5-flash',
+            'gemini-3.5-flash': 'gemini-1.5-flash',
             'gemini-3.5-pro': 'gemini-2.5-pro',
-            'gemini-3.1-flash': 'gemini-2.5-flash',
+            'gemini-3.1-flash': 'gemini-1.5-flash',
             'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
             'gemini-3.1-pro': 'gemini-2.5-pro',
-            'gemini-3.0-flash': 'gemini-2.5-flash',
+            'gemini-3.0-flash': 'gemini-1.5-flash',
             'gemini-3.0-pro': 'gemini-2.5-pro',
         }
         if modelo in mapeo:
             return mapeo[modelo]
         # Si no está en la lista de válidos ni en el mapeo, usar default
-        return 'gemini-2.5-flash'
+        return 'gemini-1.5-flash'
 
     def is_ready(self):
         return self.client is not None and GEMINI_AVAILABLE
@@ -613,80 +613,111 @@ class GeminiEngine:
             return 'bmp'
         return 'jpeg'  # default
 
-    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None):
-        """Llama a Gemini con el prompt dado, opcionalmente con archivos adjuntos (imagenes/PDF)."""
+    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None, max_retries=3):
+        """Llama a Gemini con retry y backoff. Soporta archivos adjuntos."""
         if not self.is_ready():
             return None
-        try:
-            # Importar GenerateContentConfig si está disponible
+
+        import time
+
+        for attempt in range(max_retries):
             try:
-                from google.genai.types import GenerateContentConfig
-                HAS_CONFIG = True
-            except ImportError:
-                HAS_CONFIG = False
+                # Importar GenerateContentConfig si está disponible
+                try:
+                    from google.genai.types import GenerateContentConfig
+                    HAS_CONFIG = True
+                except ImportError:
+                    HAS_CONFIG = False
 
-            # Crear configuración de generación
-            if HAS_CONFIG:
-                gen_config = GenerateContentConfig(temperature=temperature)
-            else:
-                gen_config = None
-
-            # Construir contenido multimodal si hay archivos adjuntos
-            if archivos_adjuntos and len(archivos_adjuntos) > 0:
-                contenido = []
-                # Agregar el prompt de texto primero
-                contenido.append({"text": prompt})
-
-                # Agregar cada archivo adjunto
-                for archivo in archivos_adjuntos:
-                    if archivo['tipo'] == 'imagen':
-                        formato = self._detectar_formato_imagen(archivo['bytes'])
-                        b64 = self._imagen_a_base64(archivo['bytes'])
-                        contenido.append({
-                            "inline_data": {
-                                "mime_type": f"image/{formato}",
-                                "data": b64
-                            }
-                        })
-                    elif archivo['tipo'] == 'pdf':
-                        # Para PDF, Gemini puede procesar texto extraido o el PDF directo
-                        b64 = self._imagen_a_base64(archivo['bytes'])
-                        contenido.append({
-                            "inline_data": {
-                                "mime_type": "application/pdf",
-                                "data": b64
-                            }
-                        })
-
-                # Usar contenido multimodal con la API correcta
-                if gen_config:
-                    response = self.client.models.generate_content(
-                        model=self.modelo,
-                        contents=contenido,
-                        config=gen_config
-                    )
+                # Crear configuración de generación
+                if HAS_CONFIG:
+                    gen_config = GenerateContentConfig(temperature=temperature)
                 else:
-                    response = self.client.models.generate_content(
-                        model=self.modelo,
-                        contents=contenido
-                    )
-                return response.text
-            else:
-                # Llamada solo con texto
-                if gen_config:
-                    response = self.client.models.generate_content(
-                        model=self.modelo,
-                        contents=prompt,
-                        config=gen_config
-                    )
+                    gen_config = None
+
+                # Construir contenido multimodal si hay archivos adjuntos
+                if archivos_adjuntos and len(archivos_adjuntos) > 0:
+                    contenido = []
+                    contenido.append({"text": prompt})
+                    for archivo in archivos_adjuntos:
+                        if archivo['tipo'] == 'imagen':
+                            formato = self._detectar_formato_imagen(archivo['bytes'])
+                            b64 = self._imagen_a_base64(archivo['bytes'])
+                            contenido.append({
+                                "inline_data": {
+                                    "mime_type": f"image/{formato}",
+                                    "data": b64
+                                }
+                            })
+                        elif archivo['tipo'] == 'pdf':
+                            b64 = self._imagen_a_base64(archivo['bytes'])
+                            contenido.append({
+                                "inline_data": {
+                                    "mime_type": "application/pdf",
+                                    "data": b64
+                                }
+                            })
+                    if gen_config:
+                        response = self.client.models.generate_content(
+                            model=self.modelo, contents=contenido, config=gen_config
+                        )
+                    else:
+                        response = self.client.models.generate_content(
+                            model=self.modelo, contents=contenido
+                        )
+                    return response.text
                 else:
-                    response = self.client.models.generate_content(
-                        model=self.modelo,
-                        contents=prompt
-                    )
-                return response.text
-        except Exception as e:
-            st.error(f"Error en llamada Gemini: {e}")
+                    if gen_config:
+                        response = self.client.models.generate_content(
+                            model=self.modelo, contents=prompt, config=gen_config
+                        )
+                    else:
+                        response = self.client.models.generate_content(
+                            model=self.modelo, contents=prompt
+                        )
+                    return response.text
+
+            except Exception as e:
+                error_msg = str(e)
+                is_rate_limit = '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower()
+                is_not_found = '404' in error_msg or 'NOT_FOUND' in error_msg
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 5 + 5
+                    st.warning(f"⏳ Cuota excedida. Reintentando en {wait_time}s... (intento {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                elif is_rate_limit:
+                    st.error("🚫 **Cuota de Gemini excedida.** Has alcanzado el límite gratuito (20 requests/día por modelo).\n\n"
+                            "**Soluciones:**\n"
+                            "1. Espera 24 horas para reinicio de cuota\n"
+                            "2. Cambia a otro modelo en Configuración IA (ej: gemini-1.5-flash)\n"
+                            "3. Obtén API Key de pago: https://ai.google.dev/pricing\n"
+                            "4. Usa el modo manual para completar los campos")
+                    return None
+                elif is_not_found:
+                    st.error(f"❌ Modelo no encontrado: {self.modelo}. Verifica Configuración IA.")
+                    return None
+                else:
+                    if attempt < max_retries - 1:
+                        st.warning(f"⚠️ Error temporal. Reintentando... ({attempt + 1}/{max_retries})")
+                        time.sleep(2 ** attempt)
+                        continue
+                    st.error(f"Error en llamada Gemini: {e}")
+                    return None
+        return None
+"
+                        "**Soluciones:**
+"
+                        "1. Espera 24 horas para que se reinicie la cuota
+"
+                        "2. Obtén una API Key de pago en https://ai.google.dev/pricing
+"
+                        "3. Usa el modo manual para completar los campos")
+            elif '404' in error_msg or 'NOT_FOUND' in error_msg:
+                st.error(f"❌ Modelo no encontrado: {self.modelo}. Verifica la configuración de IA.")
+            else:
+                st.error(f"Error en llamada Gemini: {e}")
             return None
 
     def generar_acr_completo(self, contexto_problema, tipo='ACR', archivos_adjuntos=None):
@@ -888,7 +919,7 @@ def corregir_texto(texto, usar_ia=True):
 
     if usar_ia:
         api_key = ia_cfg.get('api_key', '')
-        modelo = ia_cfg.get('modelo', 'gemini-2.5-flash')
+        modelo = ia_cfg.get('modelo', 'gemini-1.5-flash')
         if api_key:
             gemini = GeminiEngine(api_key, modelo)
             if gemini.is_ready():
@@ -908,7 +939,7 @@ def humanizar_texto(texto):
         return texto
 
     api_key = ia_cfg.get('api_key', '')
-    modelo = ia_cfg.get('modelo', 'gemini-2.5-flash')
+    modelo = ia_cfg.get('modelo', 'gemini-1.5-flash')
     if api_key:
         gemini = GeminiEngine(api_key, modelo)
         if gemini.is_ready():
@@ -1618,7 +1649,7 @@ def page_form():
         generar_ia = col_gen.button("🤖 GENERAR DOCUMENTO CON IA", type="primary", use_container_width=True)
 
         with col_cfg:
-            st.caption(f"Modelo: {ia_cfg.get('modelo','gemini-2.5-flash')} | Correccion: {'✅' if ia_cfg.get('activar_correccion') else '❌'} | Humanizar: {'✅' if ia_cfg.get('activar_humanizar') else '❌'}")
+            st.caption(f"Modelo: {ia_cfg.get('modelo','gemini-1.5-flash')} | Correccion: {'✅' if ia_cfg.get('activar_correccion') else '❌'} | Humanizar: {'✅' if ia_cfg.get('activar_humanizar') else '❌'}")
 
         if generar_ia:
             if not api_key:
@@ -1630,7 +1661,7 @@ def page_form():
                 num_archivos = len(archivos_adjuntos)
                 mensaje_procesando = f"🤖 La IA esta analizando el problema y {num_archivos} archivo(s) adjunto(s)... Esto puede tomar 30-90 segundos." if num_archivos > 0 else "🤖 La IA esta analizando el problema y generando el documento completo... Esto puede tomar 30-60 segundos."
                 with st.spinner(mensaje_procesando):
-                    gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-2.5-flash'))
+                    gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-1.5-flash'))
                     resultado = gemini.generar_acr_completo(contexto_ia, tipo, archivos_adjuntos=archivos_adjuntos)
 
                 if resultado:
@@ -1810,7 +1841,7 @@ def page_form():
                 ses_part = sc5.text_area("Participantes", height=60)
                 ses_obs  = st.text_area("Observaciones", height=60)
                 if st.form_submit_button("+ Agregar Sesion", type="primary"):
-                    db_run("INSERT INTO sesiones_acr (codigo_acr,sesion_num,fecha,hora_inicio,duracion,participantes,observaciones) VALUES(?,?,?,?,?,?,?)",
+                    db_run("INSERT OR REPLACE INTO sesiones_acr (codigo_acr,sesion_num,fecha,hora_inicio,duracion,participantes,observaciones) VALUES(?,?,?,?,?,?,?)",
                            (codigo, ses_num, str(ses_fech), ses_hora, ses_dur, ses_part, ses_obs))
                     st.success("Sesion agregada.")
                     st.rerun()
@@ -2475,9 +2506,9 @@ def page_config_ia():
 
     ia_cfg = get_ia_cfg()
     # Asegurar que el modelo guardado sea válido
-    modelo_guardado = ia_cfg.get('modelo', 'gemini-2.5-flash')
+    modelo_guardado = ia_cfg.get('modelo', 'gemini-1.5-flash')
     if 'gemini-3.' in modelo_guardado.lower():
-        modelo_guardado = 'gemini-2.5-flash'
+        modelo_guardado = 'gemini-1.5-flash'
         ia_cfg['modelo'] = modelo_guardado
         db_run("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_guardado, ia_cfg['id']))
 
@@ -2491,9 +2522,9 @@ def page_config_ia():
         st.markdown("**Parametros del Modelo**")
         c1, c2, c3 = st.columns(3)
         modelo = c1.selectbox("Modelo Gemini",
-            ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'],
-            index=['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'].index(
-                ia_cfg.get('modelo','gemini-2.5-flash')) if ia_cfg.get('modelo') in ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'] else 0)
+            ['gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+            index=['gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'].index(
+                ia_cfg.get('modelo','gemini-1.5-flash')) if ia_cfg.get('modelo') in ['gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'] else 0)
         temperatura = c2.slider("Temperatura (creatividad)", 0.0, 1.0, 
             float(ia_cfg.get('temperatura',0.3)), 0.1,
             help="0 = muy preciso, 1 = muy creativo")
