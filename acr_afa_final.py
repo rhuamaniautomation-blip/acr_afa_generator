@@ -408,7 +408,7 @@ def _crear_tablas(conn):
         """CREATE TABLE IF NOT EXISTS config_ia (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             api_key TEXT,
-            modelo TEXT DEFAULT 'gemini-1.5-flash',
+            modelo TEXT DEFAULT 'gemini-3.1-flash-lite',
             temperatura REAL DEFAULT 0.3,
             max_tokens INTEGER DEFAULT 4096,
             idioma TEXT DEFAULT 'es',
@@ -439,21 +439,23 @@ def _crear_tablas(conn):
         except Exception:
             pass
     conn.commit()
-    # Migración: corregir modelos inválidos guardados en config_ia
+    # Migración: actualizar modelos antiguos/deprecated a modelos actuales (2026)
     try:
         cur = conn.execute("SELECT id, modelo FROM config_ia WHERE modelo LIKE 'gemini-3.%'")
         for row in cur.fetchall():
             modelo_invalido = row['modelo'].lower().strip()
             mapeo_db = {
-                'gemini-3.5-flash': 'gemini-1.5-flash',
-                'gemini-3.5-pro': 'gemini-2.5-pro',
-                'gemini-3.1-flash': 'gemini-1.5-flash',
-                'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
-                'gemini-3.1-pro': 'gemini-2.5-pro',
-                'gemini-3.0-flash': 'gemini-1.5-flash',
-                'gemini-3.0-pro': 'gemini-2.5-pro',
+                'gemini-1.5-flash': 'gemini-3.1-flash-lite',
+                'gemini-1.5-flash-8b': 'gemini-3.1-flash-lite',
+                'gemini-1.5-pro': 'gemini-3.1-pro',
+                'gemini-2.0-flash': 'gemini-3.5-flash',
+                'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
+                'gemini-2.0-pro': 'gemini-2.5-pro',
             }
-            modelo_corregido = mapeo_db.get(modelo_invalido, 'gemini-1.5-flash')
+            if modelo_invalido in mapeo_db:
+                modelo_corregido = mapeo_db[modelo_invalido]
+            else:
+                continue
             conn.execute("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_corregido, row['id']))
         conn.commit()
     except Exception:
@@ -510,21 +512,21 @@ def get_ia_cfg():
     if not row:
         return {}
     cfg = dict(row)
-    # Corregir modelo inválido si existe
+    # Corregir modelos antiguos/deprecated a modelos actuales (2026)
     modelo = cfg.get('modelo', '')
-    if modelo and 'gemini-3.' in modelo.lower():
+    if modelo:
         mapeo_cfg = {
-            'gemini-3.5-flash': 'gemini-1.5-flash',
-            'gemini-3.5-pro': 'gemini-2.5-pro',
-            'gemini-3.1-flash': 'gemini-1.5-flash',
-            'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
-            'gemini-3.1-pro': 'gemini-2.5-pro',
-            'gemini-3.0-flash': 'gemini-1.5-flash',
-            'gemini-3.0-pro': 'gemini-2.5-pro',
+            'gemini-1.5-flash': 'gemini-3.1-flash-lite',
+            'gemini-1.5-flash-8b': 'gemini-3.1-flash-lite',
+            'gemini-1.5-pro': 'gemini-3.1-pro',
+            'gemini-2.0-flash': 'gemini-3.5-flash',
+            'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
+            'gemini-2.0-pro': 'gemini-2.5-pro',
         }
-        cfg['modelo'] = mapeo_cfg.get(modelo.lower().strip(), 'gemini-1.5-flash')
-        # Actualizar también en la BD
-        db_run("UPDATE config_ia SET modelo=? WHERE id=?", (cfg['modelo'], cfg['id']))
+        modelo_limpio = modelo.lower().strip()
+        if modelo_limpio in mapeo_cfg:
+            cfg['modelo'] = mapeo_cfg[modelo_limpio]
+            db_run("UPDATE config_ia SET modelo=? WHERE id=?", (cfg['modelo'], cfg['id']))
     return cfg
 
 def save_ia_cfg(cfg_dict):
@@ -535,7 +537,7 @@ def save_ia_cfg(cfg_dict):
             idioma=?, estilo_redaccion=?, nivel_detalle=?,
             activar_correccion=?, activar_humanizar=?, prompt_personalizado=?
             WHERE id=?""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-1.5-flash'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-3.1-flash-lite'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
@@ -546,7 +548,7 @@ def save_ia_cfg(cfg_dict):
             (api_key,modelo,temperatura,max_tokens,idioma,estilo_redaccion,
              nivel_detalle,activar_correccion,activar_humanizar,prompt_personalizado)
             VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-1.5-flash'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-3.1-flash-lite'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
@@ -973,7 +975,7 @@ def corregir_texto(texto, usar_ia=True):
 
     if usar_ia:
         api_key = ia_cfg.get('api_key', '')
-        modelo = ia_cfg.get('modelo', 'gemini-1.5-flash')
+        modelo = ia_cfg.get('modelo', 'gemini-3.1-flash-lite')
         if api_key:
             gemini = GeminiEngine(api_key, modelo)
             if gemini.is_ready():
@@ -993,7 +995,7 @@ def humanizar_texto(texto):
         return texto
 
     api_key = ia_cfg.get('api_key', '')
-    modelo = ia_cfg.get('modelo', 'gemini-1.5-flash')
+    modelo = ia_cfg.get('modelo', 'gemini-3.1-flash-lite')
     if api_key:
         gemini = GeminiEngine(api_key, modelo)
         if gemini.is_ready():
@@ -2604,10 +2606,20 @@ def page_config_ia():
     st.markdown("Configure la API de Gemini y los parametros de generacion de texto.")
 
     ia_cfg = get_ia_cfg()
-    # Asegurar que el modelo guardado sea válido
-    modelo_guardado = ia_cfg.get('modelo', 'gemini-1.5-flash')
-    if 'gemini-3.' in modelo_guardado.lower():
-        modelo_guardado = 'gemini-1.5-flash'
+    # Asegurar que el modelo guardado sea válido (2026)
+    modelo_guardado = ia_cfg.get('modelo', 'gemini-3.1-flash-lite')
+    # Si el modelo guardado es legacy (antiguo), actualizarlo
+    mapeo_legacy = {
+        'gemini-1.5-flash': 'gemini-3.1-flash-lite',
+        'gemini-1.5-flash-8b': 'gemini-3.1-flash-lite',
+        'gemini-1.5-pro': 'gemini-3.1-pro',
+        'gemini-2.0-flash': 'gemini-3.5-flash',
+        'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
+        'gemini-2.0-pro': 'gemini-2.5-pro',
+    }
+    modelo_limpio = modelo_guardado.lower().strip()
+    if modelo_limpio in mapeo_legacy:
+        modelo_guardado = mapeo_legacy[modelo_limpio]
         ia_cfg['modelo'] = modelo_guardado
         db_run("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_guardado, ia_cfg['id']))
 
@@ -2620,10 +2632,25 @@ def page_config_ia():
 
         st.markdown("**Parametros del Modelo**")
         c1, c2, c3 = st.columns(3)
+        # Lista de modelos disponibles (2026)
+        modelos_disponibles = ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-3.1-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']
+
+        # Obtener modelo guardado, con fallback a default
+        modelo_guardado = ia_cfg.get('modelo', 'gemini-3.1-flash-lite')
+
+        # Si el modelo guardado no está en la lista actual (es legacy), usar default
+        if modelo_guardado not in modelos_disponibles:
+            modelo_guardado = 'gemini-3.1-flash-lite'
+
+        # Calcular índice de forma segura
+        try:
+            idx_modelo = modelos_disponibles.index(modelo_guardado)
+        except ValueError:
+            idx_modelo = 0
+
         modelo = c1.selectbox("Modelo Gemini",
-            ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-3.1-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
-            index=['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-3.1-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'].index(
-                ia_cfg.get('modelo','gemini-3.1-flash-lite')) if ia_cfg.get('modelo') in ['gemini-1.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'] else 0)
+            modelos_disponibles,
+            index=idx_modelo)
         temperatura = c2.slider("Temperatura (creatividad)", 0.0, 1.0, 
             float(ia_cfg.get('temperatura',0.3)), 0.1,
             help="0 = muy preciso, 1 = muy creativo")
@@ -2685,7 +2712,7 @@ def page_config_ia():
             with st.spinner("Probando conexion..."):
                 gemini = GeminiEngine(api_key, modelo)
                 if gemini.is_ready():
-                    st.success("✅ Conexion exitosa con Gemini!")
+                    st.success(f"✅ Conexion exitosa con Gemini! Modelo: {gemini.modelo}")
                 else:
                     st.error("❌ No se pudo conectar con Gemini. Verifique su API Key.")
 
