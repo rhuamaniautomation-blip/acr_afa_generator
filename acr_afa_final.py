@@ -4,16 +4,15 @@
 ================================================================================
 SISTEMA INSTITUCIONAL DE GESTION DOCUMENTAL ACR / AFA — STREAMLIT WEB
 Analisis de Causa Raiz (ACR) y Analisis de Fallas y Acciones (AFA)
-Version: 12.0.0 | Normativa: ISO 9001, ISO 14224, TPM, RCM
+Version: 13.0.0 | Normativa: ISO 9001, ISO 14224, TPM, RCM
 ================================================================================
-NUEVAS FUNCIONALIDADES v12.0.0:
-- Historico persistente de todos los documentos ACR/AFA en SQLite
-- Configuracion de empresa persistente (logo, encabezado, pie de pagina)
-- Integracion con IA Gemini para autocompletar campos del ACR/AFA
-- Correccion ortografica automatica en todos los textos
-- Humanizacion de textos generados por IA
-- Contexto libre del problema con IA
-- Campos editables manualmente despues de la generacion IA
+NUEVAS FUNCIONALIDADES v13.0.0:
+- Motor IA Gemini v3.x con fallback automatico a modelos gratuitos
+- Manejo inteligente de errores 429 RESOURCE_EXHAUSTED con retry y backoff
+- Soporte multimodal nativo con google.genai.types.Part
+- Deteccion automatica de modelos disponibles en free tier
+- Prompt de sistema optimizado para experto en ACR/AFA industrial
+- Cadena de fallback: 3.5 Flash → 3.1 Flash-Lite → 2.5 Flash → 2.5 Flash-Lite
 """
 
 import streamlit as st
@@ -45,9 +44,11 @@ from reportlab.platypus import (
 # ── IA Gemini ─────────────────────────────────────────────────────────────────
 try:
     from google import genai
+    from google.genai import types
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
+    types = None
 
 # ── Correccion ortografica ────────────────────────────────────────────────────
 try:
@@ -300,6 +301,35 @@ hr { border: none; border-top: 1px solid #e9ecef; margin: 16px 0; }
     padding: 3px 10px; border-radius: 12px;
     font-size: .72rem; font-weight: 600;
 }
+
+/* Nuevos estilos para estado de conexion IA */
+.ia-status-ok {
+    background: linear-gradient(135deg, #d1f2eb, #a9dfbf);
+    border: 1px solid #27ae60;
+    color: #0e6655;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: .85rem;
+}
+.ia-status-warn {
+    background: linear-gradient(135deg, #fef9c3, #fde8c8);
+    border: 1px solid #f39c12;
+    color: #7d6608;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: .85rem;
+}
+.ia-status-err {
+    background: linear-gradient(135deg, #f8d7da, #f5b7b1);
+    border: 1px solid #e74c3c;
+    color: #842029;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: .85rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -408,7 +438,7 @@ def _crear_tablas(conn):
         """CREATE TABLE IF NOT EXISTS config_ia (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             api_key TEXT,
-            modelo TEXT DEFAULT 'gemini-2.5-flash',
+            modelo TEXT DEFAULT 'gemini-3.5-flash',
             temperatura REAL DEFAULT 0.3,
             max_tokens INTEGER DEFAULT 4096,
             idioma TEXT DEFAULT 'es',
@@ -417,6 +447,7 @@ def _crear_tablas(conn):
             activar_correccion INTEGER DEFAULT 1,
             activar_humanizar INTEGER DEFAULT 1,
             prompt_personalizado TEXT,
+            fallback_automatico INTEGER DEFAULT 1,
             fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS seguimiento_acciones (
@@ -439,25 +470,39 @@ def _crear_tablas(conn):
         except Exception:
             pass
     conn.commit()
-    # Migración: corregir modelos inválidos guardados en config_ia
+    # Migracion: actualizar modelos antiguos a la nueva nomenclatura v3.x
     try:
-        cur = conn.execute("SELECT id, modelo FROM config_ia WHERE modelo LIKE 'gemini-3.%'")
+        cur = conn.execute("SELECT id, modelo FROM config_ia")
         for row in cur.fetchall():
-            modelo_invalido = row['modelo'].lower().strip()
-            mapeo_db = {
-                'gemini-3.5-flash': 'gemini-2.5-flash',
-                'gemini-3.5-pro': 'gemini-2.5-pro',
-                'gemini-3.1-flash': 'gemini-2.5-flash',
-                'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
-                'gemini-3.1-pro': 'gemini-2.5-pro',
-                'gemini-3.0-flash': 'gemini-2.5-flash',
-                'gemini-3.0-pro': 'gemini-2.5-pro',
-            }
-            modelo_corregido = mapeo_db.get(modelo_invalido, 'gemini-2.5-flash')
-            conn.execute("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_corregido, row['id']))
+            modelo_actual = row['modelo'].lower().strip() if row['modelo'] else ''
+            modelo_nuevo = _mapear_modelo_a_v3(modelo_actual)
+            if modelo_nuevo != modelo_actual:
+                conn.execute("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_nuevo, row['id']))
         conn.commit()
     except Exception:
         pass
+
+def _mapear_modelo_a_v3(modelo):
+    """Mapea cualquier nombre de modelo antiguo a la nomenclatura v3.x actual."""
+    if not modelo:
+        return 'gemini-3.5-flash'
+    mapeo = {
+        'gemini-3.5-flash': 'gemini-3.5-flash',
+        'gemini-3.1-flash-lite': 'gemini-3.1-flash-lite',
+        'gemini-3.1-pro': 'gemini-3.1-pro',
+        'gemini-3.1-flash': 'gemini-3.1-flash',
+        'gemini-3.0-flash': 'gemini-3.5-flash',
+        'gemini-3.0-pro': 'gemini-3.1-pro',
+        'gemini-2.5-flash': 'gemini-3.5-flash',
+        'gemini-2.5-flash-lite': 'gemini-3.1-flash-lite',
+        'gemini-2.5-pro': 'gemini-3.1-pro',
+        'gemini-2.0-flash': 'gemini-3.5-flash',
+        'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
+        'gemini-2.0-pro': 'gemini-3.1-pro',
+        'gemini-1.5-flash': 'gemini-3.5-flash',
+        'gemini-1.5-pro': 'gemini-3.1-pro',
+    }
+    return mapeo.get(modelo, 'gemini-3.5-flash')
 
 def db_query(sql, params=()):
     return get_db().execute(sql, params).fetchall()
@@ -499,20 +544,11 @@ def get_ia_cfg():
     if not row:
         return {}
     cfg = dict(row)
-    # Corregir modelo inválido si existe
+    # Asegurar modelo valido
     modelo = cfg.get('modelo', '')
-    if modelo and 'gemini-3.' in modelo.lower():
-        mapeo_cfg = {
-            'gemini-3.5-flash': 'gemini-2.5-flash',
-            'gemini-3.5-pro': 'gemini-2.5-pro',
-            'gemini-3.1-flash': 'gemini-2.5-flash',
-            'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
-            'gemini-3.1-pro': 'gemini-2.5-pro',
-            'gemini-3.0-flash': 'gemini-2.5-flash',
-            'gemini-3.0-pro': 'gemini-2.5-pro',
-        }
-        cfg['modelo'] = mapeo_cfg.get(modelo.lower().strip(), 'gemini-2.5-flash')
-        # Actualizar también en la BD
+    cfg['modelo'] = _mapear_modelo_a_v3(modelo)
+    # Actualizar en BD si cambio
+    if modelo != cfg['modelo']:
         db_run("UPDATE config_ia SET modelo=? WHERE id=?", (cfg['modelo'], cfg['id']))
     return cfg
 
@@ -522,276 +558,388 @@ def save_ia_cfg(cfg_dict):
         db_run("""UPDATE config_ia SET
             api_key=?, modelo=?, temperatura=?, max_tokens=?,
             idioma=?, estilo_redaccion=?, nivel_detalle=?,
-            activar_correccion=?, activar_humanizar=?, prompt_personalizado=?
+            activar_correccion=?, activar_humanizar=?, prompt_personalizado=?,
+            fallback_automatico=?
             WHERE id=?""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-2.5-flash'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-3.5-flash'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
              cfg_dict.get('activar_correccion',1), cfg_dict.get('activar_humanizar',1),
-             cfg_dict.get('prompt_personalizado',''), existing['id']))
+             cfg_dict.get('prompt_personalizado',''), cfg_dict.get('fallback_automatico',1),
+             existing['id']))
     else:
         db_run("""INSERT INTO config_ia
             (api_key,modelo,temperatura,max_tokens,idioma,estilo_redaccion,
-             nivel_detalle,activar_correccion,activar_humanizar,prompt_personalizado)
-            VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-2.5-flash'),
+             nivel_detalle,activar_correccion,activar_humanizar,prompt_personalizado,fallback_automatico)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-3.5-flash'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
              cfg_dict.get('activar_correccion',1), cfg_dict.get('activar_humanizar',1),
-             cfg_dict.get('prompt_personalizado','')))
+             cfg_dict.get('prompt_personalizado',''), cfg_dict.get('fallback_automatico',1)))
 
 print("Parte 1 generada correctamente")
 
 
+
 # ==============================================================================
-# MOTOR DE IA GEMINI
+# MOTOR DE IA GEMINI v3.x CON FALLBACK AUTOMATICO
 # ==============================================================================
 class GeminiEngine:
-    """Motor de IA para autocompletar campos ACR/AFA con Gemini."""
+    """
+    Motor de IA para autocompletar campos ACR/AFA con Gemini.
 
-    # Modelos válidos soportados por la API de Gemini
-    MODELOS_VALIDOS = [
-        'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro',
-        'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.0-pro',
-        'gemini-1.5-flash', 'gemini-1.5-pro'
+    Caracteristicas:
+    - Cadena de fallback automatico cuando un modelo agota cuota (429)
+    - Retry con backoff exponencial para errores temporales
+    - Deteccion inteligente de errores RESOURCE_EXHAUSTED
+    - Soporte multimodal nativo con types.Part
+    - Cooldown tracking para evitar requests a modelos bloqueados
+    """
+
+    # ==============================================================================
+    # CADENA DE FALLBACK: Orden de prioridad de modelos
+    # ==============================================================================
+    # Modelos gratuitos (Free Tier) - Julio 2026
+    # gemini-3.5-flash:     15 RPM, 1,500 RPD - Default, mas rapido
+    # gemini-3.1-flash-lite: 30 RPM, 1,500 RPD - Alto throughput
+    # gemini-2.5-flash:      Legacy, paid-only desde Abril 2026
+    # gemini-2.5-flash-lite: Legacy, paid-only desde Abril 2026
+
+    CADENA_FALLBACK = [
+        'gemini-3.5-flash',      # PRIMARY: Default, free tier
+        'gemini-3.1-flash-lite', # SECONDARY: Alto throughput, free tier
+        'gemini-2.5-flash',      # TERTIARY: Legacy fallback
+        'gemini-2.5-flash-lite', # FINAL: Legacy budget fallback
     ]
 
-    def __init__(self, api_key=None, modelo='gemini-2.5-flash'):
+    # Modelos de pago (requieren billing habilitado)
+    MODELOS_PAGO = [
+        'gemini-3.1-pro',
+        'gemini-3.1-pro-preview',
+        'gemini-3.0-pro',
+        'gemini-2.5-pro',
+        'gemini-2.0-pro',
+    ]
+
+    # Todos los modelos validos soportados
+    MODELOS_VALIDOS = CADENA_FALLBACK + MODELOS_PAGO
+
+    def __init__(self, api_key=None, modelo='gemini-3.5-flash'):
         self.api_key = api_key
-        self.modelo = self._validar_modelo(modelo)
+        self.modelo_preferido = self._validar_modelo(modelo)
         self.client = None
+        self.cooldowns = {}  # model_name -> earliest_retry_time (epoch)
+        self.ultimo_modelo_usado = None
+        self.estado_conexion = "NO_INICIALIZADO"
+        self.mensaje_estado = ""
+
         if api_key and GEMINI_AVAILABLE:
             try:
                 os.environ['GEMINI_API_KEY'] = api_key
+                os.environ['GOOGLE_API_KEY'] = api_key
                 self.client = genai.Client()
+                self.estado_conexion = "CONECTADO"
+                self.mensaje_estado = "Conexion exitosa con Gemini API"
             except Exception as e:
-                st.error(f"Error inicializando Gemini: {e}")
+                self.estado_conexion = "ERROR"
+                self.mensaje_estado = "Error inicializando Gemini: " + str(e)
+                st.error(self.mensaje_estado)
 
     def _validar_modelo(self, modelo):
-        '''Corrige automáticamente nombres de modelos inválidos.'''
+        # Corrige automaticamente nombres de modelos invalidos a la nomenclatura v3.x
         if not modelo:
-            return 'gemini-2.5-flash'
+            return 'gemini-3.5-flash'
         modelo = modelo.strip().lower()
-        # Si ya es válido, retornar tal cual
         if modelo in self.MODELOS_VALIDOS:
             return modelo
-        # Mapear modelos inválidos conocidos
-        mapeo = {
-            'gemini-3.5-flash': 'gemini-2.5-flash',
-            'gemini-3.5-pro': 'gemini-2.5-pro',
-            'gemini-3.1-flash': 'gemini-2.5-flash',
-            'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
-            'gemini-3.1-pro': 'gemini-2.5-pro',
-            'gemini-3.0-flash': 'gemini-2.5-flash',
-            'gemini-3.0-pro': 'gemini-2.5-pro',
-        }
-        if modelo in mapeo:
-            return mapeo[modelo]
-        # Si no está en la lista de válidos ni en el mapeo, usar default
-        return 'gemini-2.5-flash'
+        return _mapear_modelo_a_v3(modelo)
 
     def is_ready(self):
         return self.client is not None and GEMINI_AVAILABLE
 
-    def _imagen_a_base64(self, bytes_img):
-        """Convierte bytes de imagen a base64 para enviar a Gemini."""
-        return base64.b64encode(bytes_img).decode('utf-8')
+    def _esta_en_cooldown(self, modelo):
+        # Verifica si un modelo esta en periodo de cooldown por rate limit
+        if modelo in self.cooldowns:
+            if time.time() < self.cooldowns[modelo]:
+                return True
+            else:
+                del self.cooldowns[modelo]
+        return False
+
+    def _agregar_cooldown(self, modelo, segundos=60):
+        # Agrega un modelo a cooldown despues de un error 429
+        self.cooldowns[modelo] = time.time() + segundos
 
     def _detectar_formato_imagen(self, bytes_img):
-        """Detecta el formato de imagen a partir de los bytes."""
+        # Detecta el formato de imagen a partir de los bytes magicos
+        if not bytes_img:
+            return 'image/jpeg'
         if bytes_img[:8] == b'\x89PNG\r\n\x1a\n':
-            return 'png'
+            return 'image/png'
         elif bytes_img[:2] == b'\xff\xd8':
-            return 'jpeg'
+            return 'image/jpeg'
         elif bytes_img[:4] == b'GIF8':
-            return 'gif'
+            return 'image/gif'
         elif bytes_img[:4] == b'RIFF' and bytes_img[8:12] == b'WEBP':
-            return 'webp'
+            return 'image/webp'
         elif bytes_img[:4] == b'\x42\x4d':
-            return 'bmp'
-        return 'jpeg'  # default
+            return 'image/bmp'
+        return 'image/jpeg'
 
-    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None):
-        """Llama a Gemini con el prompt dado, opcionalmente con archivos adjuntos (imagenes/PDF)."""
+    def _construir_contenido_multimodal(self, prompt, archivos_adjuntos=None):
+        # Construye el contenido multimodal usando la API moderna de google.genai
+        if not archivos_adjuntos or len(archivos_adjuntos) == 0:
+            return prompt
+
+        contenido = [prompt]
+
+        for archivo in archivos_adjuntos:
+            if archivo['tipo'] == 'imagen' and archivo.get('bytes'):
+                mime_type = self._detectar_formato_imagen(archivo['bytes'])
+                if types:
+                    contenido.append(
+                        types.Part.from_bytes(data=archivo['bytes'], mime_type=mime_type)
+                    )
+                else:
+                    contenido.append({
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": base64.b64encode(archivo['bytes']).decode('utf-8')
+                        }
+                    })
+            elif archivo['tipo'] == 'pdf' and archivo.get('bytes'):
+                if types:
+                    contenido.append(
+                        types.Part.from_bytes(data=archivo['bytes'], mime_type='application/pdf')
+                    )
+                else:
+                    contenido.append({
+                        "inline_data": {
+                            "mime_type": "application/pdf",
+                            "data": base64.b64encode(archivo['bytes']).decode('utf-8')
+                        }
+                    })
+
+        return contenido
+
+    def _es_error_cuota(self, error):
+        # Detecta si un error es de tipo cuota agotada (429 / RESOURCE_EXHAUSTED)
+        error_str = str(error).lower()
+        patrones_cuota = [
+            '429', 'resource_exhausted', 'quota exceeded', 'rate limit',
+            'too many requests', 'quota_dimension', 'quota_limit',
+            'resource has been exhausted',
+        ]
+        return any(p in error_str for p in patrones_cuota)
+
+    def _es_error_modelo_invalido(self, error):
+        # Detecta si el error es porque el modelo no existe o no esta disponible
+        error_str = str(error).lower()
+        patrones_invalido = [
+            'not found', 'invalid model', 'model not found', 'unsupported model',
+            'does not exist', 'not supported', '404',
+        ]
+        return any(p in error_str for p in patrones_invalido)
+
+    def _call_gemini_con_fallback(self, prompt, system_instruction=None, temperature=0.3,
+                                   max_tokens=4096, archivos_adjuntos=None):
+        # Llama a Gemini con cadena de fallback automatico
         if not self.is_ready():
-            return None
-        try:
-            # Importar GenerateContentConfig si está disponible
-            try:
-                from google.genai.types import GenerateContentConfig
-                HAS_CONFIG = True
-            except ImportError:
-                HAS_CONFIG = False
+            return None, None, "Cliente Gemini no inicializado"
 
-            # Crear configuración de generación
-            if HAS_CONFIG:
-                gen_config = GenerateContentConfig(temperature=temperature)
-            else:
-                gen_config = None
+        modelos_a_probar = [self.modelo_preferido]
+        for m in self.CADENA_FALLBACK:
+            if m not in modelos_a_probar:
+                modelos_a_probar.append(m)
 
-            # Construir contenido multimodal si hay archivos adjuntos
-            if archivos_adjuntos and len(archivos_adjuntos) > 0:
-                contenido = []
-                # Agregar el prompt de texto primero
-                contenido.append({"text": prompt})
+        contenido = self._construir_contenido_multimodal(prompt, archivos_adjuntos)
 
-                # Agregar cada archivo adjunto
-                for archivo in archivos_adjuntos:
-                    if archivo['tipo'] == 'imagen':
-                        formato = self._detectar_formato_imagen(archivo['bytes'])
-                        b64 = self._imagen_a_base64(archivo['bytes'])
-                        contenido.append({
-                            "inline_data": {
-                                "mime_type": f"image/{formato}",
-                                "data": b64
-                            }
-                        })
-                    elif archivo['tipo'] == 'pdf':
-                        # Para PDF, Gemini puede procesar texto extraido o el PDF directo
-                        b64 = self._imagen_a_base64(archivo['bytes'])
-                        contenido.append({
-                            "inline_data": {
-                                "mime_type": "application/pdf",
-                                "data": b64
-                            }
-                        })
+        info_fallback = []
+        ultimo_error = None
 
-                # Usar contenido multimodal con la API correcta
-                if gen_config:
+        for modelo in modelos_a_probar:
+            if self._esta_en_cooldown(modelo):
+                msg = "Modelo " + modelo + " en cooldown (rate limit previo)"
+                info_fallback.append(msg)
+                continue
+
+            for intento in range(3):
+                try:
+                    config_kwargs = {
+                        'temperature': temperature,
+                        'max_output_tokens': max_tokens,
+                    }
+                    if system_instruction:
+                        config_kwargs['system_instruction'] = system_instruction
+
+                    if types:
+                        gen_config = types.GenerateContentConfig(**config_kwargs)
+                    else:
+                        gen_config = config_kwargs
+
                     response = self.client.models.generate_content(
-                        model=self.modelo,
+                        model=modelo,
                         contents=contenido,
                         config=gen_config
                     )
-                else:
-                    response = self.client.models.generate_content(
-                        model=self.modelo,
-                        contents=contenido
-                    )
-                return response.text
-            else:
-                # Llamada solo con texto
-                if gen_config:
-                    response = self.client.models.generate_content(
-                        model=self.modelo,
-                        contents=prompt,
-                        config=gen_config
-                    )
-                else:
-                    response = self.client.models.generate_content(
-                        model=self.modelo,
-                        contents=prompt
-                    )
-                return response.text
-        except Exception as e:
-            st.error(f"Error en llamada Gemini: {e}")
-            return None
+
+                    texto = response.text if hasattr(response, 'text') else str(response)
+                    self.ultimo_modelo_usado = modelo
+                    self.estado_conexion = "CONECTADO"
+
+                    if len(info_fallback) > 0:
+                        info_msg = "Usando " + modelo + " (fallback tras: " + ", ".join(info_fallback) + ")"
+                    else:
+                        info_msg = "Usando " + modelo + " (modelo preferido)"
+
+                    return texto, modelo, info_msg
+
+                except Exception as e:
+                    ultimo_error = e
+                    error_str = str(e)
+
+                    if self._es_error_cuota(e):
+                        wait_time = (2 ** intento) + (time.time() % 1)
+                        self._agregar_cooldown(modelo, segundos=60 * (intento + 1))
+                        info_fallback.append(modelo + ": Cuota agotada")
+                        time.sleep(wait_time)
+                        break
+
+                    elif self._es_error_modelo_invalido(e):
+                        info_fallback.append(modelo + ": Modelo no disponible")
+                        break
+
+                    elif intento < 2:
+                        wait_time = (2 ** intento) + 1
+                        info_fallback.append(modelo + ": Error temporal (intento " + str(intento+1) + "/3)")
+                        time.sleep(wait_time)
+                    else:
+                        info_fallback.append(modelo + ": Error persistente: " + error_str[:80])
+
+        self.estado_conexion = "ERROR"
+        error_final = str(ultimo_error) if ultimo_error else "Todos los modelos fallaron"
+        return None, None, "Sin modelos disponibles. Ultimo error: " + error_final[:200]
 
     def generar_acr_completo(self, contexto_problema, tipo='ACR', archivos_adjuntos=None):
-        """Genera un ACR/AFA completo a partir del contexto del problema y archivos adjuntos."""
+        # Genera un ACR/AFA completo a partir del contexto del problema
         ia_cfg = get_ia_cfg()
         estilo = ia_cfg.get('estilo_redaccion', 'tecnico_profesional')
         detalle = ia_cfg.get('nivel_detalle', 'detallado')
+        idioma = ia_cfg.get('idioma', 'es')
+        temp = float(ia_cfg.get('temperatura', 0.3))
+        max_tok = int(ia_cfg.get('max_tokens', 4096))
+        prompt_extra = ia_cfg.get('prompt_personalizado', '')
 
-        # Construir instrucciones sobre archivos adjuntos
         instrucciones_archivos = ""
         if archivos_adjuntos and len(archivos_adjuntos) > 0:
             tipos_archivos = []
             for arch in archivos_adjuntos:
                 if arch['tipo'] == 'imagen':
-                    tipos_archivos.append(f"imagen ({arch.get('nombre', 'foto')})")
+                    tipos_archivos.append("imagen (" + arch.get('nombre', 'foto') + ")")
                 elif arch['tipo'] == 'pdf':
-                    tipos_archivos.append(f"PDF ({arch.get('nombre', 'documento')})")
-            instrucciones_archivos = f"""
-        ADEMAS, se han adjuntado los siguientes archivos para tu analisis visual/documental: {', '.join(tipos_archivos)}.
-        Analiza cuidadosamente estas imagenes/documentos adjuntos para:
-        - Identificar componentes, equipos, condiciones visibles en las fotos
-        - Leer procedimientos, manuales o diagramas en los PDFs adjuntos
-        - Correlacionar lo que ves en las imagenes con el contexto descrito
-        - Identificar posibles causas visibles (desgaste, corrosion, fugas, daños, etc.)
-        - Extraer datos tecnicos relevantes de los documentos adjuntos
-        - Usar la informacion visual y documental para fundamentar mejor tus analisis de 5W+2H y 5 Porques
-        """
+                    tipos_archivos.append("PDF (" + arch.get('nombre', 'documento') + ")")
+            instrucciones_archivos = """
+ADEMAS, se han adjuntado los siguientes archivos para tu analisis visual/documental: """ + ", ".join(tipos_archivos) + """.
+Analiza cuidadosamente estas imagenes/documentos adjuntos para:
+- Identificar componentes, equipos, condiciones visibles en las fotos
+- Leer procedimientos, manuales o diagramas en los PDFs adjuntos
+- Correlacionar lo que ves en las imagenes con el contexto descrito
+- Identificar posibles causas visibles (desgaste, corrosion, fugas, danos, etc.)
+- Extraer datos tecnicos relevantes de los documentos adjuntos
+- Usar la informacion visual y documental para fundamentar mejor tus analisis de 5W+2H y 5 Porques
+"""
 
-        system_prompt = f"""Eres un experto en ingenieria mecatronica con 20 anos de experiencia en mantenimiento industrial, 
-        especializado en Analisis de Causa Raiz (ACR) y Analisis de Fallas (AFA) bajo normativas ISO 9001, ISO 14224, TPM y RCM.
+        idioma_str = "espanol" if idioma == 'es' else "english"
 
-        Tu estilo de redaccion es: {estilo}
-        Nivel de detalle requerido: {detalle}
+        system_instruction = """Eres un experto en ingenieria mecatronica con 20 anos de experiencia en mantenimiento industrial, 
+especializado en Analisis de Causa Raiz (ACR) y Analisis de Fallas (AFA) bajo normativas ISO 9001, ISO 14224, TPM y RCM.
 
-        Debes analizar el problema descrito y generar un documento ACR/AFA completo con:
-        - Descripcion tecnica precisa del problema
-        - Analisis 5W+2H detallado y justificado
-        - 5 Porques (Why-Why) con ramas multiples, cada una con causas raiz bien fundamentadas
-        - Condiciones basicas 6M (solo para ACR)
-        - Acciones inmediatas de contencion
-        - Acciones correctivas sobre causas raiz
+Tu estilo de redaccion es: """ + estilo + """
+Nivel de detalle requerido: """ + detalle + """
+Idioma de respuesta: """ + idioma_str + """
 
-        Los textos deben ser profesionales, sin errores ortograficos, bien estructurados con parrafos completos,
-        usando terminologia tecnica apropiada de ingenieria mecatronica y mantenimiento industrial.
+Debes analizar el problema descrito y generar un documento ACR/AFA completo con:
+- Descripcion tecnica precisa del problema
+- Analisis 5W+2H detallado y justificado
+- 5 Porques (Why-Why) con ramas multiples, cada una con causas raiz bien fundamentadas
+- Condiciones basicas 6M (solo para ACR)
+- Acciones inmediatas de contencion
+- Acciones correctivas sobre causas raiz
 
-        Responde UNICAMENTE en formato JSON con la siguiente estructura exacta:
-        {{
-            "desc_problema_inicial": "...",
-            "que_contexto": "...",
-            "como_ocurre": "...",
-            "quien": "...",
-            "donde": "...",
-            "cuanto": "...",
-            "cuando": "...",
-            "cual": "...",
-            "problema_enfocado": "...",
-            "ramas_why_why": [
-                {{
-                    "definicion": "...",
-                    "pq1": "...",
-                    "pq2": "...",
-                    "pq3": "...",
-                    "pq4": "...",
-                    "pq5": "...",
-                    "causa_raiz": "...",
-                    "accion_causa_raiz": "...",
-                    "responsable": "...",
-                    "prioridad": "MEDIA"
-                }}
-            ],
-            "acciones_inmediatas": [
-                {{
-                    "accion": "...",
-                    "responsable": "...",
-                    "fecha": "YYYY-MM-DD",
-                    "estado": "PENDIENTE"
-                }}
-            ],
-            "condiciones_6m": [
-                {{
-                    "categoria": "MAQUINA",
-                    "item": "Lubricacion",
-                    "condicion_ideal": "...",
-                    "condicion_actual": "...",
-                    "aplica": "SI",
-                    "diferencia": "NO"
-                }}
-            ]
-        }}
-        """
+Los textos deben ser profesionales, sin errores ortograficos, bien estructurados con parrafos completos,
+usando terminologia tecnica apropiada de ingenieria mecatronica y mantenimiento industrial.
 
-        prompt = f"""{system_prompt}
-        {instrucciones_archivos}
+Responde UNICAMENTE en formato JSON con la siguiente estructura exacta:
+{
+    "desc_problema_inicial": "...",
+    "que_contexto": "...",
+    "como_ocurre": "...",
+    "quien": "...",
+    "donde": "...",
+    "cuanto": "...",
+    "cuando": "...",
+    "cual": "...",
+    "problema_enfocado": "...",
+    "ramas_why_why": [
+        {
+            "definicion": "...",
+            "pq1": "...",
+            "pq2": "...",
+            "pq3": "...",
+            "pq4": "...",
+            "pq5": "...",
+            "causa_raiz": "...",
+            "accion_causa_raiz": "...",
+            "responsable": "...",
+            "prioridad": "MEDIA"
+        }
+    ],
+    "acciones_inmediatas": [
+        {
+            "accion": "...",
+            "responsable": "...",
+            "fecha": "YYYY-MM-DD",
+            "estado": "PENDIENTE"
+        }
+    ],
+    "condiciones_6m": [
+        {
+            "categoria": "MAQUINA",
+            "item": "Lubricacion",
+            "condicion_ideal": "...",
+            "condicion_actual": "...",
+            "aplica": "SI",
+            "diferencia": "NO"
+        }
+    ]
+}"""
 
-        CONTEXTO DEL PROBLEMA (descrito por el usuario):
-        {contexto_problema}
+        if prompt_extra:
+            system_instruction = system_instruction + "\n\nINSTRUCCIONES ADICIONALES DEL USUARIO:\n" + prompt_extra
 
-        TIPO DE DOCUMENTO: {tipo}
+        prompt = instrucciones_archivos + "\n\nCONTEXTO DEL PROBLEMA (descrito por el usuario):\n" + contexto_problema + "\n\nTIPO DE DOCUMENTO: " + tipo + "\n\nGenera el documento completo en formato JSON. Asegurate de que cada campo tenga contenido sustancial con parrafos bien desarrollados, justificaciones tecnicas y analisis profundo como un especialista en ingenieria mecatronica lo haria."
 
-        Genera el documento completo en formato JSON. Asegurate de que cada campo tenga contenido sustancial
-        con parrafos bien desarrollados, justificaciones tecnicas y analisis profundo como un especialista
-        en ingenieria mecatronica lo haria."""
+        # Llamar con fallback automatico
+        respuesta, modelo_usado, info = self._call_gemini_con_fallback(
+            prompt,
+            system_instruction=system_instruction,
+            temperature=temp,
+            max_tokens=max_tok,
+            archivos_adjuntos=archivos_adjuntos
+        )
 
-        respuesta = self._call_gemini(prompt, temperature=0.3, archivos_adjuntos=archivos_adjuntos)
+        # Mostrar info de fallback en la UI
+        if info:
+            if "fallback" in info.lower():
+                st.info("🔄 " + info)
+            else:
+                st.success(info)
+
         if not respuesta:
+            st.error("❌ La IA no pudo generar el documento. " + info)
             return None
 
         try:
@@ -801,48 +949,75 @@ class GeminiEngine:
                 return json.loads(json_str)
             else:
                 return json.loads(respuesta)
-        except json.JSONDecodeError:
-            st.error("La IA no devolvio un formato JSON valido. Intenta de nuevo.")
+        except json.JSONDecodeError as e:
+            st.error("❌ La IA no devolvio un formato JSON valido. Error: " + str(e)[:100])
+            st.code(respuesta[:500], language="text")
             return None
 
     def humanizar_texto(self, texto):
-        """Humaniza un texto generado por IA para que suene natural pero profesional."""
         if not texto or not self.is_ready():
             return texto
 
-        prompt = f"""Reescribe el siguiente texto de un analisis ACR/AFA para que suene mas natural y humano,
-        manteniendo el tono profesional tecnico de ingenieria mecatronica. 
-        Corrige cualquier error ortografico o gramatical. 
-        Manten la terminologia tecnica pero haz que el flujo sea mas conversacional y menos robotico.
-        No agregues explicaciones, solo devuelve el texto reescrito.
+        system_instruction = "Eres un editor tecnico especializado en documentacion de mantenimiento industrial."
+        prompt = """Reescribe el siguiente texto de un analisis ACR/AFA para que suene mas natural y humano,
+manteniendo el tono profesional tecnico de ingenieria mecatronica. 
+Corrige cualquier error ortografico o gramatical. 
+Manten la terminologia tecnica pero haz que el flujo sea mas conversacional y menos robotico.
+No agregues explicaciones, solo devuelve el texto reescrito.
 
-        TEXTO:
-        {texto}"""
+TEXTO:
+""" + texto
 
-        respuesta = self._call_gemini(prompt, temperature=0.4)
+        respuesta, modelo, info = self._call_gemini_con_fallback(
+            prompt,
+            system_instruction=system_instruction,
+            temperature=0.4,
+            max_tokens=4096
+        )
         return respuesta if respuesta else texto
 
     def corregir_ortografia(self, texto):
-        """Corrige errores ortograficos en el texto."""
         if not texto or not self.is_ready():
             return texto
 
-        prompt = f"""Corrige UNICAMENTE los errores ortograficos, gramaticales y de puntuacion del siguiente texto.
-        NO cambies el contenido, el significado ni la estructura. Solo corrige errores de redaccion.
-        Manten la terminologia tecnica intacta. Devuelve SOLO el texto corregido.
+        system_instruction = "Eres un corrector ortografico profesional."
+        prompt = """Corrige UNICAMENTE los errores ortograficos, gramaticales y de puntuacion del siguiente texto.
+NO cambies el contenido, el significado ni la estructura. Solo corrige errores de redaccion.
+Manten la terminologia tecnica intacta. Devuelve SOLO el texto corregido.
 
-        TEXTO:
-        {texto}"""
+TEXTO:
+""" + texto
 
-        respuesta = self._call_gemini(prompt, temperature=0.1)
+        respuesta, modelo, info = self._call_gemini_con_fallback(
+            prompt,
+            system_instruction=system_instruction,
+            temperature=0.1,
+            max_tokens=4096
+        )
         return respuesta if respuesta else texto
+
+    def probar_conexion(self):
+        if not self.is_ready():
+            return False, "Cliente no inicializado. Verifique la API Key."
+
+        try:
+            respuesta, modelo, info = self._call_gemini_con_fallback(
+                "Responde unicamente: CONEXION_OK",
+                temperature=0.0,
+                max_tokens=10
+            )
+            if respuesta and "CONEXION_OK" in respuesta:
+                return True, "✅ Conexion exitosa con " + modelo + "! " + info
+            else:
+                resp_corta = respuesta[:100] if respuesta else 'Ninguna'
+                return False, "⚠️ Conexion parcial. Respuesta: " + resp_corta
+        except Exception as e:
+            return False, "❌ Error de conexion: " + str(e)[:200]
 
 # ==============================================================================
 # CORRECCION ORTOGRAFICA CON LANGUAGE TOOL
 # ==============================================================================
 class OrtografiaEngine:
-    """Motor de correccion ortografica usando LanguageTool."""
-
     def __init__(self):
         self.tool = None
         if LANG_TOOL_AVAILABLE:
@@ -855,7 +1030,6 @@ class OrtografiaEngine:
         return self.tool is not None
 
     def corregir(self, texto):
-        """Corrige errores ortograficos en el texto."""
         if not texto or not self.is_ready():
             return texto
         try:
@@ -868,7 +1042,6 @@ class OrtografiaEngine:
 # FUNCIONES DE CORRECCION UNIFICADAS
 # ==============================================================================
 def corregir_texto(texto, usar_ia=True):
-    """Corrige el texto usando LanguageTool primero, luego IA si esta disponible."""
     if not texto:
         return texto
 
@@ -884,7 +1057,7 @@ def corregir_texto(texto, usar_ia=True):
 
     if usar_ia:
         api_key = ia_cfg.get('api_key', '')
-        modelo = ia_cfg.get('modelo', 'gemini-2.5-flash')
+        modelo = ia_cfg.get('modelo', 'gemini-3.5-flash')
         if api_key:
             gemini = GeminiEngine(api_key, modelo)
             if gemini.is_ready():
@@ -893,7 +1066,6 @@ def corregir_texto(texto, usar_ia=True):
     return texto
 
 def humanizar_texto(texto):
-    """Humaniza el texto usando IA."""
     if not texto:
         return texto
 
@@ -904,7 +1076,7 @@ def humanizar_texto(texto):
         return texto
 
     api_key = ia_cfg.get('api_key', '')
-    modelo = ia_cfg.get('modelo', 'gemini-2.5-flash')
+    modelo = ia_cfg.get('modelo', 'gemini-3.5-flash')
     if api_key:
         gemini = GeminiEngine(api_key, modelo)
         if gemini.is_ready():
@@ -913,7 +1085,6 @@ def humanizar_texto(texto):
     return texto
 
 def procesar_texto_final(texto):
-    """Aplica correccion ortografica y humanizacion al texto."""
     texto = corregir_texto(texto, usar_ia=True)
     texto = humanizar_texto(texto)
     return texto
@@ -922,7 +1093,6 @@ def procesar_texto_final(texto):
 # HISTORICO DE DOCUMENTOS
 # ==============================================================================
 def archivar_documento(codigo, motivo="Documento completado y cerrado"):
-    """Archiva un documento en el historico."""
     doc = db_one("SELECT * FROM documentos WHERE codigo=?", (codigo,))
     if not doc:
         return False
@@ -934,7 +1104,7 @@ def archivar_documento(codigo, motivo="Documento completado y cerrado"):
 
     datos_json = json.dumps(d, default=str, ensure_ascii=False)
 
-    codigo_historico = f"HIST-{codigo}-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    codigo_historico = "HIST-" + codigo + "-" + datetime.datetime.now().strftime('%Y%m%d%H%M%S')
 
     db_run("""INSERT INTO historico_documentos
         (codigo_original, codigo_historico, tipo_documento, motivo_archivado,
@@ -951,7 +1121,6 @@ def archivar_documento(codigo, motivo="Documento completado y cerrado"):
     return True
 
 def obtener_historico(filtro_tipo='TODOS', busqueda=''):
-    """Obtiene todos los documentos historicos."""
     sql = "SELECT * FROM historico_documentos WHERE 1=1"
     params = []
     if filtro_tipo != 'TODOS':
@@ -959,13 +1128,12 @@ def obtener_historico(filtro_tipo='TODOS', busqueda=''):
         params.append(filtro_tipo)
     if busqueda:
         sql += " AND (codigo_original LIKE ? OR codigo_historico LIKE ? OR motivo_archivado LIKE ?)"
-        b = f"%{busqueda}%"
+        b = "%" + busqueda + "%"
         params.extend([b, b, b])
     sql += " ORDER BY fecha_archivado DESC"
     return db_query(sql, tuple(params))
 
 def restaurar_documento(codigo_historico):
-    """Restaura un documento desde el historico."""
     hist = db_one("SELECT * FROM historico_documentos WHERE codigo_historico=?", (codigo_historico,))
     if not hist:
         return None
@@ -988,12 +1156,11 @@ def restaurar_documento(codigo_historico):
             vals.append(v)
 
     placeholders = ','.join(['?' for _ in vals])
-    db_run(f"INSERT INTO documentos ({','.join(cols)}) VALUES ({placeholders})", tuple(vals))
+    db_run("INSERT INTO documentos (" + ','.join(cols) + ") VALUES (" + placeholders + ")", tuple(vals))
 
     return nuevo_codigo
 
 def obtener_estadisticas_historico():
-    """Obtiene estadisticas del historico."""
     total_docs = db_one("SELECT COUNT(*) as total FROM documentos WHERE es_historico=0")
     total_hist = db_one("SELECT COUNT(*) as total FROM historico_documentos")
 
@@ -1011,6 +1178,7 @@ def obtener_estadisticas_historico():
     }
 
 print("Parte 2 generada correctamente")
+
 
 
 # ==============================================================================
@@ -1047,7 +1215,7 @@ def _estilos_pdf():
 
 def _sec_header(texto, estilos, aw):
     C = _colores()
-    data = [[Paragraph(f'<b>{texto}</b>', estilos['seccion'])]]
+    data = [[Paragraph('<b>' + texto + '</b>', estilos['seccion'])]]
     t = Table(data, colWidths=[aw])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0),(-1,-1), C['azul_sec']),
@@ -1083,7 +1251,7 @@ def _hdr_inst(codigo_form, edicion, tipo_doc, codigo, estilos, aw, cfg):
             buf = io.BytesIO(logo_blob)
             logo_cell = RLImage(buf, width=28*mm, height=14*mm, kind='proportional')
         except Exception:
-            logo_cell = Paragraph(f'<b>{nombre}</b>',
+            logo_cell = Paragraph('<b>' + nombre + '</b>',
                 ParagraphStyle('LT', parent=estilos['celda'], alignment=TA_CENTER, fontSize=8))
     else:
         logo_cell = Paragraph(
@@ -1094,20 +1262,20 @@ def _hdr_inst(codigo_form, edicion, tipo_doc, codigo, estilos, aw, cfg):
     centro = []
     for linea in texto_enc.split('\n'):
         if linea.strip():
-            centro.append(Paragraph(f'<b>{linea.strip()}</b>',
+            centro.append(Paragraph('<b>' + linea.strip() + '</b>',
                 ParagraphStyle('CH', parent=estilos['celda'], alignment=TA_CENTER, fontSize=8)))
-    centro.append(Paragraph(f'<b>{tipo_doc}</b>',
+    centro.append(Paragraph('<b>' + tipo_doc + '</b>',
         ParagraphStyle('CS', parent=estilos['celda'], alignment=TA_CENTER,
                        fontSize=10, textColor=C['azul'])))
 
     der = [
         Paragraph('<b>Valido desde: 24/04/2026</b>',
             ParagraphStyle('D1', parent=estilos['celda'], fontSize=7)),
-        Paragraph(f'<b>{codigo_form}</b>',
+        Paragraph('<b>' + codigo_form + '</b>',
             ParagraphStyle('D2', parent=estilos['celda'], fontSize=8, alignment=TA_RIGHT)),
         Paragraph('Prox. revision: 24/04/2029',
             ParagraphStyle('D3', parent=estilos['celda'], fontSize=7)),
-        Paragraph(f'<b>{edicion}</b>',
+        Paragraph('<b>' + edicion + '</b>',
             ParagraphStyle('D4', parent=estilos['celda'], fontSize=8,
                            alignment=TA_RIGHT, textColor=C['rojo_exsa'])),
     ]
@@ -1129,8 +1297,7 @@ def exportar_pdf(codigo, es_acr):
     E = _estilos_pdf()
     cfg = get_empresa_cfg()
     nombre_empresa = cfg.get('nombre_empresa') or 'EMPRESA INDUSTRIAL S.A.'
-    texto_pie = cfg.get('texto_pie_pagina') or \
-        'Documento Controlado | Normativa: ISO 9001 / ISO 14224 / TPM / RCM'
+    texto_pie = cfg.get('texto_pie_pagina') or         'Documento Controlado | Normativa: ISO 9001 / ISO 14224 / TPM / RCM'
     codigo_form = "MAN-F-054" if es_acr else "MAN-F-053"
     edicion = "EDICION:02"
     tipo_doc_label = "ANALISIS DE CAUSA RAIZ - ACR" if es_acr else "ANALISIS DE FALLAS - AFA"
@@ -1151,7 +1318,7 @@ def exportar_pdf(codigo, es_acr):
         canvas_obj.setFont('Helvetica', 7)
         canvas_obj.setFillColor(C['gris'])
         canvas_obj.drawCentredString(page_w/2, M-6*mm,
-            f'Pagina {doc_obj.page}  |  {codigo}  |  {tipo_doc_label}')
+            'Pagina ' + str(doc_obj.page) + '  |  ' + codigo + '  |  ' + tipo_doc_label)
         canvas_obj.restoreState()
 
     tpl_p = PageTemplate(id='portrait',  frames=[fr_port], pagesize=A4_PORT,
@@ -1237,11 +1404,10 @@ def exportar_pdf(codigo, es_acr):
     # 7. Acciones inmediatas
     EL.append(SEC("7.- Acciones Inmediatas (Correccion / Contencion)"))
     accs = db_query("SELECT * FROM acciones_inmediatas WHERE codigo_acr=?", (codigo,))
-    hdr_a = [[Paragraph(f'<b>{t}</b>', E['header']) for t in ['Accion','Responsable','Fecha','Estado','Eficacia']]]
+    hdr_a = [[Paragraph('<b>' + t + '</b>', E['header']) for t in ['Accion','Responsable','Fecha','Estado','Eficacia']]]
     rows_a = [[Paragraph(r['accion'] or '', E['celda']), Paragraph(r['responsable'] or '', E['celda']),
                Paragraph(r['fecha'] or '', E['celda']),  Paragraph(r['estado'] or '', E['celda']),
-               Paragraph(r['eficacia'] or '', E['celda'])] for r in accs] or \
-             [[Paragraph('',E['celda'])]*5]
+               Paragraph(r['eficacia'] or '', E['celda'])] for r in accs] or              [[Paragraph('',E['celda'])]*5]
     ta = Table(hdr_a + rows_a, colWidths=[90*mm,40*mm,22*mm,18*mm,20*mm])
     ta.setStyle(TableStyle([
         ('BOX',(0,0),(-1,-1),0.8,C['azul']),('INNERGRID',(0,0),(-1,-1),0.3,C['borde']),
@@ -1257,7 +1423,7 @@ def exportar_pdf(codigo, es_acr):
         EL.extend([PageBreak(), HDR(AW_PORT), Spacer(1,4)])
         EL.append(SEC("8.- Revision de condiciones basicas (6M)"))
         conds = db_query("SELECT * FROM condiciones_basicas WHERE codigo_acr=? ORDER BY categoria_6m,item", (codigo,))
-        hdr_c = [[Paragraph(f'<b>{t}</b>', E['header'])
+        hdr_c = [[Paragraph('<b>' + t + '</b>', E['header'])
                   for t in ['6M','Condicion','Cond. Ideal','Cond. Actual (Hallazgo)','Aplica','Diferencia']]]
         rows_c = [[Paragraph(r['categoria_6m'] or '', E['celda']), Paragraph(r['item'] or '', E['celda']),
                    Paragraph(r['condicion_ideal'] or '', E['celda']), Paragraph(r['condicion_actual'] or '', E['celda']),
@@ -1277,7 +1443,7 @@ def exportar_pdf(codigo, es_acr):
     num_ww = "9" if es_acr else "7"
     EL.extend([NextPageTemplate('landscape'), PageBreak()])
     EL.extend([HDR(AW_LAND), Spacer(1,4)])
-    EL.append(SEC(f"{num_ww}.- Analisis Why Why (WW)", AW_LAND))
+    EL.append(SEC(num_ww + ".- Analisis Why Why (WW)", AW_LAND))
 
     whys = db_query("SELECT * FROM why_why WHERE codigo_documento=? ORDER BY CAST(rama_id AS INTEGER)", (codigo,))
     col_prio = {'BAJA':rl_colors.HexColor('#d1f2eb'),'MEDIA':rl_colors.HexColor('#fef9c3'),
@@ -1290,7 +1456,7 @@ def exportar_pdf(codigo, es_acr):
 
     cols_ww = ['N','Definicion','>','Por que 1?','>','Por que 2?','>','Por que 3?',
                '>','Por que 4?','>','Por que 5?','>','Causa Raiz','Accion','Responsable','Prioridad','Fecha']
-    hdr_ww = [[Paragraph(f'<b>{t}</b>', est_fl if t=='>' else E['header']) for t in cols_ww]]
+    hdr_ww = [[Paragraph('<b>' + t + '</b>', est_fl if t=='>' else E['header']) for t in cols_ww]]
     sty_ww = TableStyle([
         ('BOX',(0,0),(-1,-1),0.8,C['azul']),('INNERGRID',(0,0),(-1,-1),0.3,C['borde']),
         ('BACKGROUND',(0,0),(-1,0),C['azul']),
@@ -1346,7 +1512,7 @@ def exportar_pdf(codigo, es_acr):
     EL.extend([NextPageTemplate('portrait'), PageBreak()])
     EL.extend([HDR(AW_PORT), Spacer(1,4)])
     num_cierre = "10" if es_acr else "8"
-    EL.append(SEC(f"{num_cierre}.- Cierre y Verificacion"))
+    EL.append(SEC(num_cierre + ".- Cierre y Verificacion"))
     datos_c = [
         [Paragraph('<b>Causa Raiz Identificada:</b>', E['celda']),
          Paragraph(d.get('causa_raiz_identificada') or '', E['normal'])],
@@ -1370,13 +1536,13 @@ def exportar_pdf(codigo, es_acr):
     if evis:
         num_anx = "11" if es_acr else "9"
         EL.extend([PageBreak(), HDR(AW_PORT), Spacer(1,4)])
-        EL.append(SEC(f"{num_anx}.- Anexos (Evidencias fotograficas)"))
+        EL.append(SEC(num_anx + ".- Anexos (Evidencias fotograficas)"))
         for i, evi in enumerate(evis, 1):
             img_b = evi['imagen_blob']
-            desc = evi['descripcion'] or evi['nombre_archivo'] or f"Imagen {i}"
+            desc = evi['descripcion'] or evi['nombre_archivo'] or ("Imagen " + str(i))
             tipo_e = evi['tipo_evidencia'] or ''
             fmt = (evi['formato'] or '.jpg').lower()
-            cap = Paragraph(f'<b>Figura {i}.</b> [{tipo_e}] {desc}',
+            cap = Paragraph('<b>Figura ' + str(i) + '.</b> [' + tipo_e + '] ' + desc,
                 ParagraphStyle('Cap', parent=E['celda'], fontSize=8,
                                alignment=TA_CENTER, spaceBefore=2, spaceAfter=4))
             if img_b and fmt in ['.jpg','.jpeg','.png','.bmp','.gif','.tiff']:
@@ -1391,12 +1557,12 @@ def exportar_pdf(codigo, es_acr):
                     ]))
                     EL.extend([ti, cap])
                 except Exception:
-                    EL.append(Paragraph(f'Figura {i}. {desc} (imagen no disponible)', E['normal']))
+                    EL.append(Paragraph('Figura ' + str(i) + '. ' + desc + ' (imagen no disponible)', E['normal']))
             EL.append(Spacer(1,6))
 
     EL.extend([Spacer(1,10),
                HRFlowable(width="100%", thickness=0.8, color=C['gris']),
-               Paragraph(f'<i>{nombre_empresa} | {texto_pie}</i>', E['pie'])])
+               Paragraph('<i>' + nombre_empresa + ' | ' + texto_pie + '</i>', E['pie'])])
 
     doc.build(EL)
     buf_pdf.seek(0)
@@ -1421,9 +1587,9 @@ def show_header(nombre_empresa="SISTEMA ACR / AFA"):
         else:
             st.markdown("### 🔧")
     with col_titulo:
-        st.markdown(f"""
+        st.markdown("""
         <div style="padding:10px 0">
-            <div style="font-size:1.5rem;font-weight:700;color:#1e3a5f">{nombre}</div>
+            <div style="font-size:1.5rem;font-weight:700;color:#1e3a5f">""" + nombre + """</div>
             <div style="font-size:.9rem;color:#2a5a8c">
                 Sistema de Gestion Documental — ACR / AFA | ISO 9001 · ISO 14224 · TPM · RCM
             </div>
@@ -1436,6 +1602,7 @@ def estado_color(estado):
     return m.get(estado, '⚪')
 
 print("Parte 3 generada correctamente")
+
 
 
 # ==============================================================================
@@ -1471,7 +1638,7 @@ def page_dashboard():
         JOIN documentos d ON ai.codigo_acr = d.codigo
         WHERE ai.fecha < ? AND ai.estado != 'CERRADO' AND d.es_historico=0""", (today,))
     if accs_venc:
-        st.warning(f"⚠️ **{len(accs_venc)} accion(es) vencida(s)** — Requiere atencion inmediata")
+        st.warning("⚠️ **" + str(len(accs_venc)) + " accion(es) vencida(s)** — Requiere atencion inmediata")
 
     st.markdown("### 📋 Documentos Recientes")
 
@@ -1481,39 +1648,39 @@ def page_dashboard():
 
     for d in docs[:15]:
         with st.expander(
-            f"{estado_color(d['estado'])} **{d['codigo']}** — {d['tipo_documento']} | "
-            f"{d['desc_problema_inicial'][:70] if d['desc_problema_inicial'] else 'Sin descripcion'}...",
+            estado_color(d['estado']) + " **" + d['codigo'] + "** — " + d['tipo_documento'] + " | " +
+            (d['desc_problema_inicial'][:70] if d['desc_problema_inicial'] else 'Sin descripcion') + "...",
             expanded=False
         ):
             c1, c2, c3 = st.columns(3)
-            c1.write(f"**Tipo:** {d['tipo_documento']}")
-            c1.write(f"**Estado:** {d['estado']}")
-            c2.write(f"**Reportado por:** {d['reportado_por']}")
-            c2.write(f"**Area:** {d['area_equipo'] or '—'}")
-            c3.write(f"**Prioridad:** {d['prioridad']}")
-            c3.write(f"**Fecha:** {d['fecha_reporte']}")
+            c1.write("**Tipo:** " + d['tipo_documento'])
+            c1.write("**Estado:** " + d['estado'])
+            c2.write("**Reportado por:** " + d['reportado_por'])
+            c2.write("**Area:** " + (d['area_equipo'] or '—'))
+            c3.write("**Prioridad:** " + d['prioridad'])
+            c3.write("**Fecha:** " + d['fecha_reporte'])
 
             bc1, bc2, bc3, bc4 = st.columns([1,1,1,1])
-            if bc1.button("✏️ Editar", key=f"edit_{d['codigo']}"):
+            if bc1.button("✏️ Editar", key="edit_" + d['codigo']):
                 st.session_state['pagina'] = 'form'
                 st.session_state['doc_codigo'] = d['codigo']
                 st.session_state['doc_tipo'] = d['tipo_documento']
                 st.rerun()
-            if bc2.button("📄 Exportar PDF", key=f"pdf_{d['codigo']}"):
+            if bc2.button("📄 Exportar PDF", key="pdf_" + d['codigo']):
                 with st.spinner("Generando PDF..."):
                     pdf_bytes = exportar_pdf(d['codigo'], d['tipo_documento']=='ACR')
                 bc2.download_button("⬇️ Descargar", pdf_bytes,
-                                    file_name=f"{d['codigo']}.pdf",
+                                    file_name=d['codigo'] + ".pdf",
                                     mime="application/pdf",
-                                    key=f"dl_{d['codigo']}")
+                                    key="dl_" + d['codigo'])
             if d['estado'] in ('CERRADO', 'APROBADO'):
-                if bc3.button("📚 Archivar", key=f"arch_{d['codigo']}"):
+                if bc3.button("📚 Archivar", key="arch_" + d['codigo']):
                     archivar_documento(d['codigo'])
-                    st.success(f"Documento {d['codigo']} archivado al historico.")
+                    st.success("Documento " + d['codigo'] + " archivado al historico.")
                     st.rerun()
-            if bc4.button("🗑 Eliminar", key=f"del_{d['codigo']}"):
+            if bc4.button("🗑 Eliminar", key="del_" + d['codigo']):
                 db_run("DELETE FROM documentos WHERE codigo=?", (d['codigo'],))
-                st.success(f"Documento {d['codigo']} eliminado.")
+                st.success("Documento " + d['codigo'] + " eliminado.")
                 st.rerun()
 
 # ── Pagina: Nuevo / Editar Documento ─────────────────────────────────────────
@@ -1525,7 +1692,7 @@ def page_form():
 
     icon = "🔍" if tipo == 'ACR' else "⚠️"
     titulo_tipo = "ANALISIS DE CAUSA RAIZ" if tipo == 'ACR' else "ANALISIS DE FALLAS"
-    st.markdown(f"## {icon} {titulo_tipo} ({tipo})")
+    st.markdown("## " + icon + " " + titulo_tipo + " (" + tipo + ")")
 
     d = {}
     if not es_nuevo:
@@ -1538,15 +1705,34 @@ def page_form():
 
     if es_nuevo:
         codigo = gen_codigo(tipo)
-        st.info(f"**Codigo generado:** `{codigo}`")
+        st.info("**Codigo generado:** `" + codigo + "`")
     else:
-        st.info(f"**Editando:** `{codigo}`")
+        st.info("**Editando:** `" + codigo + "`")
 
     # ── SECCION IA ────────────────────────────────────────────────────────────
     ia_cfg = get_ia_cfg()
     api_key = ia_cfg.get('api_key', '')
 
+    # Mostrar estado de conexion IA
     st.markdown("---")
+
+    # Barra de estado de IA
+    col_estado_ia, col_info_ia = st.columns([1, 3])
+    with col_estado_ia:
+        if api_key and GEMINI_AVAILABLE:
+            gemini_test = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-3.5-flash'))
+            if gemini_test.is_ready():
+                st.markdown('<div class="ia-status-ok">🟢 IA Conectada</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="ia-status-err">🔴 IA Error</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="ia-status-warn">🟡 IA No Configurada</div>', unsafe_allow_html=True)
+
+    with col_info_ia:
+        modelo_actual = ia_cfg.get('modelo', 'gemini-3.5-flash')
+        st.caption("Modelo: `" + modelo_actual + "` | Fallback automatico: " + 
+                   ("✅ Activado" if ia_cfg.get('fallback_automatico', 1) else "❌ Desactivado"))
+
     st.markdown("### 🤖 Asistente IA — Generacion Automatica con Gemini")
 
     with st.expander("📝 Ingresar Contexto del Problema para IA", expanded=es_nuevo):
@@ -1599,11 +1785,11 @@ def page_form():
                     if tipo_archivo == 'imagen':
                         try:
                             img = Image.open(io.BytesIO(bytes_archivo))
-                            st.image(img, caption=f"📷 {archivo.name}", use_container_width=True)
+                            st.image(img, caption="📷 " + archivo.name, use_container_width=True)
                         except Exception:
-                            st.info(f"📷 {archivo.name}")
+                            st.info("📷 " + archivo.name)
                     else:
-                        st.info(f"📄 {archivo.name} (PDF)")
+                        st.info("📄 " + archivo.name + " (PDF)")
             # Guardar en session state para uso posterior
             st.session_state['ia_archivos_adjuntos'] = archivos_procesados
         else:
@@ -1614,7 +1800,10 @@ def page_form():
         generar_ia = col_gen.button("🤖 GENERAR DOCUMENTO CON IA", type="primary", use_container_width=True)
 
         with col_cfg:
-            st.caption(f"Modelo: {ia_cfg.get('modelo','gemini-2.5-flash')} | Correccion: {'✅' if ia_cfg.get('activar_correccion') else '❌'} | Humanizar: {'✅' if ia_cfg.get('activar_humanizar') else '❌'}")
+            modelo_display = ia_cfg.get('modelo','gemini-3.5-flash')
+            correccion_display = '✅' if ia_cfg.get('activar_correccion') else '❌'
+            humanizar_display = '✅' if ia_cfg.get('activar_humanizar') else '❌'
+            st.caption("Modelo: " + modelo_display + " | Correccion: " + correccion_display + " | Humanizar: " + humanizar_display)
 
         if generar_ia:
             if not api_key:
@@ -1624,9 +1813,13 @@ def page_form():
             else:
                 archivos_adjuntos = st.session_state.get('ia_archivos_adjuntos', [])
                 num_archivos = len(archivos_adjuntos)
-                mensaje_procesando = f"🤖 La IA esta analizando el problema y {num_archivos} archivo(s) adjunto(s)... Esto puede tomar 30-90 segundos." if num_archivos > 0 else "🤖 La IA esta analizando el problema y generando el documento completo... Esto puede tomar 30-60 segundos."
+                if num_archivos > 0:
+                    mensaje_procesando = "🤖 La IA esta analizando el problema y " + str(num_archivos) + " archivo(s) adjunto(s)... Esto puede tomar 30-90 segundos."
+                else:
+                    mensaje_procesando = "🤖 La IA esta analizando el problema y generando el documento completo... Esto puede tomar 30-60 segundos."
+
                 with st.spinner(mensaje_procesando):
-                    gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-2.5-flash'))
+                    gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-3.5-flash'))
                     resultado = gemini.generar_acr_completo(contexto_ia, tipo, archivos_adjuntos=archivos_adjuntos)
 
                 if resultado:
@@ -1803,7 +1996,7 @@ def page_form():
             _save_doc_general(codigo, tipo, es_nuevo, locals())
             st.session_state['doc_codigo'] = codigo
             st.session_state['es_nuevo_guardado'] = False
-            st.success(f"✅ Guardado correctamente. Codigo: `{codigo}`")
+            st.success("✅ Guardado correctamente. Codigo: `" + codigo + "`")
             st.rerun()
 
     # ── TAB 2: Problema / 5W+2H ───────────────────────────────────────────────
@@ -1835,7 +2028,7 @@ def page_form():
             with st.spinner("Generando PDF con orientacion inteligente..."):
                 pdf_b = exportar_pdf(cod_actual, tipo=='ACR')
             st.download_button("⬇️ Descargar PDF", pdf_b,
-                               file_name=f"{cod_actual}.pdf",
+                               file_name=cod_actual + ".pdf",
                                mime="application/pdf")
 
 def _save_doc_general(codigo, tipo, es_nuevo, local_vars):
@@ -1873,6 +2066,7 @@ def _save_doc_general(codigo, tipo, es_nuevo, local_vars):
                (fr,est,rp,cr,ar,la,ae,resp,fi,ap,prio,ce,ip,is_,ia,codigo))
 
 print("Parte 4 generada correctamente")
+
 
 
 def _tab_problema(codigo, d, tipo, es_nuevo):
@@ -1960,15 +2154,15 @@ def _upload_imagenes_inline(codigo, seccion, es_nuevo):
     if es_nuevo and not st.session_state.get('doc_codigo'):
         st.caption("_Guarda primero los datos generales para poder subir imagenes._")
         return
-    with st.expander(f"📷 Imagenes / Evidencias de esta seccion ({seccion.upper()})", expanded=False):
+    with st.expander("📷 Imagenes / Evidencias de esta seccion (" + seccion.upper() + ")", expanded=False):
         c1, c2 = st.columns([3,1])
-        desc_img = c1.text_input("Descripcion breve", key=f"desc_img_{seccion}")
+        desc_img = c1.text_input("Descripcion breve", key="desc_img_" + seccion)
         tipo_evi = c2.selectbox("Tipo", ['FALLA','CAUSA','ACCION','VERIFICACION','REFERENCIA','OTRO'],
-                                key=f"tipo_evi_{seccion}")
+                                key="tipo_evi_" + seccion)
         uploaded = st.file_uploader("Seleccionar imagen",
             type=['png','jpg','jpeg','bmp','gif'],
-            key=f"uploader_{seccion}")
-        if st.button("+ Agregar imagen", key=f"btn_img_{seccion}") and uploaded:
+            key="uploader_" + seccion)
+        if st.button("+ Agregar imagen", key="btn_img_" + seccion) and uploaded:
             img_b = uploaded.read()
             fmt = "." + uploaded.name.split('.')[-1].lower()
             db_run("""INSERT INTO evidencias
@@ -1976,7 +2170,7 @@ def _upload_imagenes_inline(codigo, seccion, es_nuevo):
                 VALUES(?,?,?,?,?,?,?,?)""",
                    (codigo, uploaded.name, tipo_evi, desc_img or uploaded.name,
                     img_b, len(img_b), fmt, seccion))
-            st.success(f"Imagen '{uploaded.name}' agregada.")
+            st.success("Imagen '" + uploaded.name + "' agregada.")
             st.rerun()
 
         evis = db_query("SELECT * FROM evidencias WHERE codigo_documento=? AND seccion=? ORDER BY fecha_registro",
@@ -1988,11 +2182,11 @@ def _upload_imagenes_inline(codigo, seccion, es_nuevo):
                     if evi['imagen_blob']:
                         try:
                             img = Image.open(io.BytesIO(evi['imagen_blob']))
-                            st.image(img, caption=f"Fig. {i+1} — {evi['descripcion'] or evi['nombre_archivo']}",
+                            st.image(img, caption="Fig. " + str(i+1) + " — " + (evi['descripcion'] or evi['nombre_archivo']),
                                      use_container_width=True)
                         except Exception:
-                            st.caption(f"Fig. {i+1}: {evi['nombre_archivo']}")
-                    if st.button("🗑 Eliminar", key=f"del_evi_{evi['id']}"):
+                            st.caption("Fig. " + str(i+1) + ": " + evi['nombre_archivo'])
+                    if st.button("🗑 Eliminar", key="del_evi_" + str(evi['id'])):
                         db_run("DELETE FROM evidencias WHERE id=?", (evi['id'],))
                         st.rerun()
 
@@ -2032,7 +2226,7 @@ def _seccion_acciones_inmediatas(codigo, es_nuevo):
         id_del = st.selectbox("Eliminar accion con ID:",
                               options=[0]+[a['id'] for a in accs],
                               format_func=lambda x: "Seleccionar..." if x==0 else
-                              f"ID {x}: {next((a['accion'][:50] for a in accs if a['id']==x), '')}",
+                              "ID " + str(x) + ": " + next((a['accion'][:50] for a in accs if a['id']==x), ''),
                               key="del_acc_id")
         if id_del and st.button("🗑 Eliminar accion seleccionada", key="del_acc_btn"):
             db_run("DELETE FROM acciones_inmediatas WHERE id=?", (id_del,))
@@ -2107,14 +2301,14 @@ def _tab_condiciones_6m(codigo, d, es_nuevo):
 
     cambios = []
     for cat, items in CONDICIONES_6M.items():
-        st.markdown(f"""
+        st.markdown("""
         <div style="background:#1e3a5f;color:white;font-weight:700;padding:8px 14px;
                     border-radius:6px;margin:14px 0 8px 0;font-size:.95rem;">
-            {ICONO_CAT.get(cat,'')} {cat}
+            """ + ICONO_CAT.get(cat,'') + " " + cat + """
         </div>""", unsafe_allow_html=True)
 
         for (item, condicion_ideal_default) in items:
-            key = f"{cat}|{item}"
+            key = cat + "|" + item
             existing = conds_db.get(key, {})
             aplica_val = existing.get('aplica', 'SI')
             diferencia_val = existing.get('diferencia', 'NO')
@@ -2129,29 +2323,29 @@ def _tab_condiciones_6m(codigo, d, es_nuevo):
                 border_color = "#198754"
                 estado_icon = "🟢"
 
-            with st.expander(f"{estado_icon} **{item}**", expanded=(diferencia_val=='SI')):
+            with st.expander(estado_icon + " **" + item + "**", expanded=(diferencia_val=='SI')):
                 st.markdown("**📌 Condicion Ideal:**")
                 ideal = st.text_area("",
                     value=existing.get('condicion_ideal', condicion_ideal_default),
-                    height=90, key=f"ci_{key}",
+                    height=90, key="ci_" + key,
                     help="Esta es la condicion que deberia existir segun el estandar.")
 
                 st.markdown("**🔍 Condicion Actual — Hallazgo o Causa Inmediata:**")
                 actual = st.text_area("",
                     value=existing.get('condicion_actual',''),
-                    height=80, key=f"ca_{key}",
+                    height=80, key="ca_" + key,
                     placeholder="Describa lo que encontro en campo...",
                     help="Describa la condicion real encontrada durante la inspeccion.")
 
                 cr1, cr2 = st.columns(2)
-                aplica = cr1.radio(f"¿Aplica esta condicion?",
+                aplica = cr1.radio("¿Aplica esta condicion?",
                     ['SI','NO'],
                     index=0 if aplica_val == 'SI' else 1,
-                    horizontal=True, key=f"ap_{key}")
-                diferencia = cr2.radio(f"¿Existe diferencia respecto al ideal?",
+                    horizontal=True, key="ap_" + key)
+                diferencia = cr2.radio("¿Existe diferencia respecto al ideal?",
                     ['NO','SI'],
                     index=0 if diferencia_val == 'NO' else 1,
-                    horizontal=True, key=f"df_{key}")
+                    horizontal=True, key="df_" + key)
 
                 if diferencia == 'SI':
                     st.warning("⚠️ Se detectó diferencia. Esta condición debe incluirse en el análisis Why-Why.")
@@ -2174,7 +2368,7 @@ def _tab_condiciones_6m(codigo, d, es_nuevo):
 
     conds_actuales = db_query("SELECT * FROM condiciones_basicas WHERE codigo_acr=? AND diferencia='SI'", (codigo,))
     if conds_actuales:
-        col_info.info(f"⚠️ **{len(conds_actuales)} condicion(es) con diferencia detectada** — deben incluirse en el análisis Why-Why.")
+        col_info.info("⚠️ **" + str(len(conds_actuales)) + " condicion(es) con diferencia detectada** — deben incluirse en el análisis Why-Why.")
 
 def _tab_why_why(codigo, es_nuevo):
     if es_nuevo and not st.session_state.get('doc_codigo'):
@@ -2192,45 +2386,45 @@ def _tab_why_why(codigo, es_nuevo):
 
     for i, w in enumerate(whys):
         with st.expander(
-            f"**Rama {w['rama_id']}** {PRIO_COLS.get(w['prioridad'],'⚪')} "
-            f"| Def: {(w['definicion'] or '—')[:50]}...",
+            "**Rama " + w['rama_id'] + "** " + PRIO_COLS.get(w['prioridad'],'⚪') +
+            " | Def: " + ((w['definicion'] or '—')[:50]) + "...",
             expanded=False
         ):
             st.markdown("**Cadena causal:**")
             chain_cols = st.columns([3,0.3,2,0.3,2,0.3,2,0.3,2,0.3,2,0.3,3])
-            chain_cols[0].markdown(f"**Definicion**<br><small>{w['definicion'] or '—'}</small>",
+            chain_cols[0].markdown("**Definicion**<br><small>" + (w['definicion'] or '—') + "</small>",
                                    unsafe_allow_html=True)
             for ci, (pq, label) in enumerate([(w['pq1'],'PQ1'),(w['pq2'],'PQ2'),(w['pq3'],'PQ3'),
                                                (w['pq4'],'PQ4'),(w['pq5'],'PQ5'),(w['causa_raiz'],'Causa')]):
                 chain_cols[ci*2+1].markdown('<div style="color:#1e60a8;font-size:1.5rem;text-align:center">→</div>',
                                             unsafe_allow_html=True)
-                chain_cols[ci*2+2].markdown(f"**{label}**<br><small>{pq or '—'}</small>",
+                chain_cols[ci*2+2].markdown("**" + label + "**<br><small>" + (pq or '—') + "</small>",
                                             unsafe_allow_html=True)
 
             st.markdown("---")
             wc1, wc2 = st.columns(2)
-            new_def = wc1.text_area("Definicion del problema", value=w['definicion'] or '', height=60, key=f"wdef_{w['id']}")
-            new_pq1 = wc2.text_area("Por que 1?", value=w['pq1'] or '', height=60, key=f"wp1_{w['id']}")
+            new_def = wc1.text_area("Definicion del problema", value=w['definicion'] or '', height=60, key="wdef_" + str(w['id']))
+            new_pq1 = wc2.text_area("Por que 1?", value=w['pq1'] or '', height=60, key="wp1_" + str(w['id']))
             wc3, wc4 = st.columns(2)
-            new_pq2 = wc3.text_area("Por que 2?", value=w['pq2'] or '', height=60, key=f"wp2_{w['id']}")
-            new_pq3 = wc4.text_area("Por que 3?", value=w['pq3'] or '', height=60, key=f"wp3_{w['id']}")
+            new_pq2 = wc3.text_area("Por que 2?", value=w['pq2'] or '', height=60, key="wp2_" + str(w['id']))
+            new_pq3 = wc4.text_area("Por que 3?", value=w['pq3'] or '', height=60, key="wp3_" + str(w['id']))
             wc5, wc6 = st.columns(2)
-            new_pq4 = wc5.text_area("Por que 4?", value=w['pq4'] or '', height=60, key=f"wp4_{w['id']}")
-            new_pq5 = wc6.text_area("Por que 5?", value=w['pq5'] or '', height=60, key=f"wp5_{w['id']}")
+            new_pq4 = wc5.text_area("Por que 4?", value=w['pq4'] or '', height=60, key="wp4_" + str(w['id']))
+            new_pq5 = wc6.text_area("Por que 5?", value=w['pq5'] or '', height=60, key="wp5_" + str(w['id']))
             wc7, wc8 = st.columns(2)
-            new_cr   = wc7.text_area("Causa Raiz", value=w['causa_raiz'] or '', height=60, key=f"wcr_{w['id']}")
-            new_acc  = wc8.text_area("Accion sobre Causa Raiz", value=w['accion_causa_raiz'] or '', height=60, key=f"wacc_{w['id']}")
+            new_cr   = wc7.text_area("Causa Raiz", value=w['causa_raiz'] or '', height=60, key="wcr_" + str(w['id']))
+            new_acc  = wc8.text_area("Accion sobre Causa Raiz", value=w['accion_causa_raiz'] or '', height=60, key="wacc_" + str(w['id']))
             wc9, wc10, wc11 = st.columns(3)
-            new_resp = wc9.text_input("Responsable", value=w['responsable'] or '', key=f"wresp_{w['id']}")
+            new_resp = wc9.text_input("Responsable", value=w['responsable'] or '', key="wresp_" + str(w['id']))
             new_prio = wc10.selectbox("Prioridad", ['BAJA','MEDIA','ALTA','CRITICA'],
                 index=['BAJA','MEDIA','ALTA','CRITICA'].index(w['prioridad'] or 'MEDIA'),
-                key=f"wprio_{w['id']}")
+                key="wprio_" + str(w['id']))
             new_fech = wc11.date_input("Fecha",
                 value=datetime.date.fromisoformat(w['fecha']) if w['fecha'] else datetime.date.today(),
-                key=f"wfech_{w['id']}")
+                key="wfech_" + str(w['id']))
 
             col_wc1, col_wc2 = st.columns([1, 1])
-            if col_wc1.button("✏️ Corregir Ortografia de Rama", key=f"corr_w_{w['id']}"):
+            if col_wc1.button("✏️ Corregir Ortografia de Rama", key="corr_w_" + str(w['id'])):
                 new_def = corregir_texto(new_def)
                 new_pq1 = corregir_texto(new_pq1)
                 new_pq2 = corregir_texto(new_pq2)
@@ -2248,15 +2442,15 @@ def _tab_why_why(codigo, es_nuevo):
                 st.rerun()
 
             ba, bb = st.columns(2)
-            if ba.button("💾 Actualizar Rama", key=f"wupd_{w['id']}"):
+            if ba.button("💾 Actualizar Rama", key="wupd_" + str(w['id'])):
                 db_run("""UPDATE why_why SET definicion=?,pq1=?,pq2=?,pq3=?,pq4=?,pq5=?,
                     causa_raiz=?,accion_causa_raiz=?,responsable=?,prioridad=?,fecha=?
                     WHERE id=?""",
                        (new_def,new_pq1,new_pq2,new_pq3,new_pq4,new_pq5,
                         new_cr,new_acc,new_resp,new_prio,str(new_fech),w['id']))
-                st.success(f"Rama {w['rama_id']} actualizada.")
+                st.success("Rama " + w['rama_id'] + " actualizada.")
                 st.rerun()
-            if bb.button("🗑 Eliminar Rama", key=f"wdel_{w['id']}"):
+            if bb.button("🗑 Eliminar Rama", key="wdel_" + str(w['id'])):
                 db_run("DELETE FROM why_why WHERE id=?", (w['id'],))
                 st.success("Rama eliminada.")
                 st.rerun()
@@ -2289,7 +2483,7 @@ def _tab_why_why(codigo, es_nuevo):
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                        (codigo, str(rama_num), nr_def, nr_pq1, nr_pq2, nr_pq3, nr_pq4, nr_pq5,
                         nr_cr, nr_acc, nr_resp, nr_prio, str(nr_fech)))
-                st.success(f"Rama {rama_num} agregada.")
+                st.success("Rama " + str(rama_num) + " agregada.")
                 st.rerun()
             else:
                 st.error("La definicion del problema es obligatoria.")
@@ -2348,31 +2542,32 @@ def _tab_anexos(codigo, es_nuevo):
                     VALUES(?,?,?,?,?,?,?,?)""",
                        (codigo, uploaded_anx.name, tipo_anx, desc_anx or uploaded_anx.name,
                         img_b, len(img_b), fmt, 'GENERAL'))
-                st.success(f"Evidencia '{uploaded_anx.name}' agregada.")
+                st.success("Evidencia '" + uploaded_anx.name + "' agregada.")
                 st.rerun()
 
     evis = db_query("SELECT * FROM evidencias WHERE codigo_documento=? ORDER BY fecha_registro", (codigo,))
     if evis:
-        st.markdown(f"**{len(evis)} evidencia(s) registrada(s):**")
+        st.markdown("**" + str(len(evis)) + " evidencia(s) registrada(s):**")
         cols = st.columns(3)
         for i, evi in enumerate(evis):
             with cols[i % 3]:
                 if evi['imagen_blob'] and evi['formato'] in ['.jpg','.jpeg','.png','.bmp','.gif']:
                     try:
                         img = Image.open(io.BytesIO(evi['imagen_blob']))
-                        st.image(img, caption=f"Fig. {i+1} [{evi['tipo_evidencia']}] {evi['descripcion'] or evi['nombre_archivo']}",
+                        st.image(img, caption="Fig. " + str(i+1) + " [" + evi['tipo_evidencia'] + "] " + (evi['descripcion'] or evi['nombre_archivo']),
                                  use_container_width=True)
                     except Exception:
-                        st.caption(f"Fig. {i+1}: {evi['nombre_archivo']}")
+                        st.caption("Fig. " + str(i+1) + ": " + evi['nombre_archivo'])
                 else:
-                    st.caption(f"📎 {evi['nombre_archivo']} ({evi['tipo_evidencia']})")
-                if st.button(f"🗑 Eliminar Fig.{i+1}", key=f"del_anx_{evi['id']}"):
+                    st.caption("📎 " + evi['nombre_archivo'] + " (" + evi['tipo_evidencia'] + ")")
+                if st.button("🗑 Eliminar Fig." + str(i+1), key="del_anx_" + str(evi['id'])):
                     db_run("DELETE FROM evidencias WHERE id=?", (evi['id'],))
                     st.rerun()
     else:
         st.info("No hay evidencias registradas aun.")
 
 print("Parte 5 generada correctamente")
+
 
 
 # ── Pagina: Configuracion Empresa ─────────────────────────────────────────────
@@ -2451,10 +2646,10 @@ def page_config_ia():
     st.markdown("Configure la API de Gemini y los parametros de generacion de texto.")
 
     ia_cfg = get_ia_cfg()
-    # Asegurar que el modelo guardado sea válido
-    modelo_guardado = ia_cfg.get('modelo', 'gemini-2.5-flash')
-    if 'gemini-3.' in modelo_guardado.lower():
-        modelo_guardado = 'gemini-2.5-flash'
+    # Asegurar que el modelo guardado sea valido
+    modelo_guardado = ia_cfg.get('modelo', 'gemini-3.5-flash')
+    modelo_guardado = _mapear_modelo_a_v3(modelo_guardado)
+    if modelo_guardado != ia_cfg.get('modelo', ''):
         ia_cfg['modelo'] = modelo_guardado
         db_run("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_guardado, ia_cfg['id']))
 
@@ -2467,10 +2662,26 @@ def page_config_ia():
 
         st.markdown("**Parametros del Modelo**")
         c1, c2, c3 = st.columns(3)
-        modelo = c1.selectbox("Modelo Gemini",
-            ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'],
-            index=['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'].index(
-                ia_cfg.get('modelo','gemini-2.5-flash')) if ia_cfg.get('modelo') in ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'] else 0)
+
+        # Lista de modelos disponibles con indicador de tier
+        opciones_modelo = [
+            'gemini-3.5-flash',
+            'gemini-3.1-flash-lite',
+            'gemini-3.1-pro',
+            'gemini-2.5-flash',
+            'gemini-2.5-flash-lite',
+            'gemini-2.5-pro',
+            'gemini-2.0-flash',
+            'gemini-2.0-pro',
+            'gemini-1.5-flash',
+            'gemini-1.5-pro',
+        ]
+        modelo_idx = 0
+        if modelo_guardado in opciones_modelo:
+            modelo_idx = opciones_modelo.index(modelo_guardado)
+
+        modelo = c1.selectbox("Modelo Gemini", opciones_modelo, index=modelo_idx)
+
         temperatura = c2.slider("Temperatura (creatividad)", 0.0, 1.0, 
             float(ia_cfg.get('temperatura',0.3)), 0.1,
             help="0 = muy preciso, 1 = muy creativo")
@@ -2493,11 +2704,14 @@ def page_config_ia():
             index=0 if ia_cfg.get('idioma','es') == 'es' else 1)
 
         st.markdown("**Opciones de Procesamiento**")
-        c7, c8 = st.columns(2)
+        c7, c8, c9 = st.columns(3)
         activar_correccion = c7.checkbox("Activar correccion ortografica automatica",
             value=bool(ia_cfg.get('activar_correccion',1)))
         activar_humanizar = c8.checkbox("Activar humanizacion de textos IA",
             value=bool(ia_cfg.get('activar_humanizar',1)))
+        fallback_automatico = c9.checkbox("Activar fallback automatico a modelos gratuitos",
+            value=bool(ia_cfg.get('fallback_automatico',1)),
+            help="Si el modelo seleccionado agota cuota, el sistema cambiara automaticamente a un modelo gratuito")
 
         st.markdown("**Prompt Personalizado (opcional)**")
         prompt_personalizado = st.text_area("Instrucciones adicionales para la IA",
@@ -2518,6 +2732,7 @@ def page_config_ia():
             'nivel_detalle': detalle,
             'activar_correccion': 1 if activar_correccion else 0,
             'activar_humanizar': 1 if activar_humanizar else 0,
+            'fallback_automatico': 1 if fallback_automatico else 0,
             'prompt_personalizado': prompt_personalizado
         })
         st.success("✅ Configuracion de IA guardada correctamente.")
@@ -2525,16 +2740,30 @@ def page_config_ia():
 
     # Probar conexion
     st.markdown("---")
-    if st.button("🧪 Probar Conexion con Gemini", type="secondary"):
-        if not api_key:
-            st.error("❌ Ingrese una API Key primero.")
-        else:
-            with st.spinner("Probando conexion..."):
-                gemini = GeminiEngine(api_key, modelo)
-                if gemini.is_ready():
-                    st.success("✅ Conexion exitosa con Gemini!")
-                else:
-                    st.error("❌ No se pudo conectar con Gemini. Verifique su API Key.")
+    col_test1, col_test2 = st.columns([1, 2])
+    with col_test1:
+        if st.button("🧪 Probar Conexion con Gemini", type="secondary"):
+            if not api_key:
+                st.error("❌ Ingrese una API Key primero.")
+            else:
+                with st.spinner("Probando conexion con cadena de fallback..."):
+                    gemini = GeminiEngine(api_key, modelo)
+                    ok, msg = gemini.probar_conexion()
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+
+    with col_test2:
+        st.markdown("""
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:.82rem;">
+            <b>📋 Cadena de Fallback Automatico:</b><br>
+            1️⃣ <code>gemini-3.5-flash</code> (Free Tier - Default)<br>
+            2️⃣ <code>gemini-3.1-flash-lite</code> (Free Tier - Alto throughput)<br>
+            3️⃣ <code>gemini-2.5-flash</code> (Legacy)<br>
+            4️⃣ <code>gemini-2.5-flash-lite</code> (Legacy Budget)
+        </div>
+        """, unsafe_allow_html=True)
 
 # ── Pagina: Listado de documentos ─────────────────────────────────────────────
 def page_listado():
@@ -2554,12 +2783,12 @@ def page_listado():
         sql += " AND estado=?"; params.append(f_estado)
     if f_busq:
         sql += " AND (codigo LIKE ? OR desc_problema_inicial LIKE ? OR responsables LIKE ? OR reportado_por LIKE ?)"
-        b = f"%{f_busq}%"
+        b = "%" + f_busq + "%"
         params.extend([b,b,b,b])
     sql += " ORDER BY fecha_registro DESC"
     docs = db_query(sql, tuple(params))
 
-    st.markdown(f"**{len(docs)} documento(s) encontrado(s)**")
+    st.markdown("**" + str(len(docs)) + " documento(s) encontrado(s)**")
 
     if not docs:
         st.info("No hay documentos que coincidan con los filtros.")
@@ -2597,12 +2826,12 @@ def page_listado():
             with st.spinner("Generando PDF..."):
                 pdf_b = exportar_pdf(sel_cod, d_sel['tipo_documento']=='ACR')
             bb.download_button("⬇️ Descargar", pdf_b,
-                               file_name=f"{sel_cod}.pdf",
+                               file_name=sel_cod + ".pdf",
                                mime="application/pdf",
                                key="dl_list")
         if bc.button("🗑 Eliminar"):
             db_run("DELETE FROM documentos WHERE codigo=?", (sel_cod,))
-            st.success(f"Documento {sel_cod} eliminado.")
+            st.success("Documento " + sel_cod + " eliminado.")
             st.rerun()
 
 # ── Pagina: Historico ─────────────────────────────────────────────────────────
@@ -2628,7 +2857,7 @@ def page_historico():
 
     historicos = obtener_historico(f_tipo_hist, f_busq_hist)
 
-    st.markdown(f"**{len(historicos)} documento(s) en historico**")
+    st.markdown("**" + str(len(historicos)) + " documento(s) en historico**")
 
     if not historicos:
         st.info("No hay documentos archivados. Los documentos cerrados/aprobados pueden archivarse desde el Dashboard.")
@@ -2637,27 +2866,27 @@ def page_historico():
     for h in historicos:
         datos = json.loads(h['datos_json'])
         with st.expander(
-            f"📚 **{h['codigo_original']}** → {h['codigo_historico']} | {h['tipo_documento']} | "
-            f"Archivado: {h['fecha_archivado'][:10]} | Estado final: {h['estado_final']}",
+            "📚 **" + h['codigo_original'] + "** → " + h['codigo_historico'] + " | " + h['tipo_documento'] + " | " +
+            "Archivado: " + h['fecha_archivado'][:10] + " | Estado final: " + h['estado_final'],
             expanded=False
         ):
             c1, c2, c3 = st.columns(3)
-            c1.write(f"**Motivo:** {h['motivo_archivado']}")
-            c1.write(f"**Acciones completadas:** {h['acciones_completadas']}/{h['acciones_totales']}")
-            c2.write(f"**Descripcion:** {(datos.get('desc_problema_inicial',''))[:100]}...")
-            c2.write(f"**Area:** {datos.get('area_equipo','—')}")
-            c3.write(f"**Causa raiz:** {(datos.get('causa_raiz_identificada',''))[:80]}...")
+            c1.write("**Motivo:** " + h['motivo_archivado'])
+            c1.write("**Acciones completadas:** " + str(h['acciones_completadas']) + "/" + str(h['acciones_totales']))
+            c2.write("**Descripcion:** " + (datos.get('desc_problema_inicial',''))[:100] + "...")
+            c2.write("**Area:** " + datos.get('area_equipo','—'))
+            c3.write("**Causa raiz:** " + (datos.get('causa_raiz_identificada',''))[:80] + "...")
 
             ba, bb = st.columns(2)
-            if ba.button("🔄 Restaurar como Nuevo Documento", key=f"rest_{h['codigo_historico']}"):
+            if ba.button("🔄 Restaurar como Nuevo Documento", key="rest_" + h['codigo_historico']):
                 nuevo_cod = restaurar_documento(h['codigo_historico'])
                 if nuevo_cod:
-                    st.success(f"✅ Documento restaurado como `{nuevo_cod}`. Puede editarlo en el formulario.")
+                    st.success("✅ Documento restaurado como `" + nuevo_cod + "`. Puede editarlo en el formulario.")
                     st.session_state['pagina'] = 'form'
                     st.session_state['doc_codigo'] = nuevo_cod
                     st.session_state['doc_tipo'] = h['tipo_documento']
                     st.rerun()
-            if bb.button("📄 Ver Datos Completos", key=f"ver_{h['codigo_historico']}"):
+            if bb.button("📄 Ver Datos Completos", key="ver_" + h['codigo_historico']):
                 st.json(datos)
 
 # ── Pagina: Plan de Accion ─────────────────────────────────────────────────────
@@ -2698,7 +2927,7 @@ def page_plan_accion():
             'eficacia': a['eficacia'] or 'POR_VERIFICAR',
             'area': a['area_equipo'] or '—',
             'prioridad': a['doc_prioridad'] or 'MEDIA',
-            'id_ref': f"AI-{a['id']}",
+            'id_ref': "AI-" + str(a['id']),
         })
     for w in all_why:
         todas_acc.append({
@@ -2712,7 +2941,7 @@ def page_plan_accion():
             'eficacia': '—',
             'area': w['area_equipo'] or '—',
             'prioridad': w['prioridad'] or 'MEDIA',
-            'id_ref': f"WW-{w['id']}",
+            'id_ref': "WW-" + str(w['id']),
         })
 
     total    = len(todas_acc)
@@ -2724,24 +2953,24 @@ def page_plan_accion():
     porc_avance = round(cerradas / total * 100, 1) if total > 0 else 0
 
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.markdown(f"""<div class="kpi-card kpi-total">
+    k1.markdown("""<div class="kpi-card kpi-total">
         <div class="kpi-label">Total Acciones</div>
-        <div class="kpi-num">{total}</div></div>""", unsafe_allow_html=True)
-    k2.markdown(f"""<div class="kpi-card kpi-pend">
+        <div class="kpi-num">""" + str(total) + """</div></div>""", unsafe_allow_html=True)
+    k2.markdown("""<div class="kpi-card kpi-pend">
         <div class="kpi-label">Pendientes</div>
-        <div class="kpi-num">{pend}</div></div>""", unsafe_allow_html=True)
-    k3.markdown(f"""<div class="kpi-card kpi-proc">
+        <div class="kpi-num">""" + str(pend) + """</div></div>""", unsafe_allow_html=True)
+    k3.markdown("""<div class="kpi-card kpi-proc">
         <div class="kpi-label">En Proceso</div>
-        <div class="kpi-num">{en_proc}</div></div>""", unsafe_allow_html=True)
-    k4.markdown(f"""<div class="kpi-card kpi-cerr">
+        <div class="kpi-num">""" + str(en_proc) + """</div></div>""", unsafe_allow_html=True)
+    k4.markdown("""<div class="kpi-card kpi-cerr">
         <div class="kpi-label">Cerradas</div>
-        <div class="kpi-num">{cerradas}</div></div>""", unsafe_allow_html=True)
-    k5.markdown(f"""<div class="kpi-card kpi-venc">
+        <div class="kpi-num">""" + str(cerradas) + """</div></div>""", unsafe_allow_html=True)
+    k5.markdown("""<div class="kpi-card kpi-venc">
         <div class="kpi-label">Vencidas</div>
-        <div class="kpi-num">{vencidas}</div></div>""", unsafe_allow_html=True)
+        <div class="kpi-num">""" + str(vencidas) + """</div></div>""", unsafe_allow_html=True)
 
     st.markdown("")
-    st.markdown(f"**Avance global de cierre: {porc_avance}%**")
+    st.markdown("**Avance global de cierre: " + str(porc_avance) + "%**")
     st.progress(porc_avance / 100)
 
     if total == 0:
@@ -2767,7 +2996,7 @@ def page_plan_accion():
         acc_filtradas = [a for a in acc_filtradas
                         if a['fecha'] and a['fecha'] < today and a['estado'] != 'CERRADO']
 
-    st.markdown(f"**{len(acc_filtradas)} accion(es) mostrada(s)**")
+    st.markdown("**" + str(len(acc_filtradas)) + " accion(es) mostrada(s)**")
 
     st.markdown("---")
     st.markdown("### 📋 Tabla de Acciones")
@@ -2784,8 +3013,8 @@ def page_plan_accion():
         "Accion":       a['accion'][:80] + ('...' if len(a['accion'])>80 else ''),
         "Responsable":  a['responsable'],
         "Fecha Limite": a['fecha'],
-        "Estado":       f"{ESTADO_ICON.get(a['estado'],'⚪')} {a['estado']}",
-        "Prioridad":    f"{PRIO_ICON.get(a['prioridad'],'⚪')} {a['prioridad']}",
+        "Estado":       ESTADO_ICON.get(a['estado'],'⚪') + " " + a['estado'],
+        "Prioridad":    PRIO_ICON.get(a['prioridad'],'⚪') + " " + a['prioridad'],
         "Area":         a['area'],
         "Eficacia":     a['eficacia'],
     } for a in acc_filtradas])
@@ -2804,35 +3033,35 @@ def page_plan_accion():
         sel_ref = st.selectbox("Seleccionar accion inmediata:",
             options=[''] + [a['id_ref'] for a in acc_ids_inm],
             format_func=lambda x: x if not x else
-                f"{x} | {next((a['accion'][:60] for a in acc_ids_inm if a['id_ref']==x), '')}",
+                x + " | " + next((a['accion'][:60] for a in acc_ids_inm if a['id_ref']==x), ''),
             key="pa_sel_ref")
 
         if sel_ref:
             id_num = int(sel_ref.replace('AI-',''))
             acc_sel = next((a for a in acc_ids_inm if a['id_ref'] == sel_ref), None)
             if acc_sel:
-                with st.form(f"form_update_pa_{sel_ref}"):
-                    st.markdown(f"**Accion:** {acc_sel['accion']}")
+                with st.form("form_update_pa_" + sel_ref):
+                    st.markdown("**Accion:** " + acc_sel['accion'])
                     uc1, uc2, uc3 = st.columns(3)
                     nuevo_est = uc1.selectbox("Nuevo Estado",
                         ['PENDIENTE','EN_PROCESO','CERRADO'],
                         index=['PENDIENTE','EN_PROCESO','CERRADO'].index(
                             acc_sel['estado'].replace('🔴 ','').replace('🟡 ','').replace('🟢 ','')),
-                        key=f"nest_{sel_ref}")
+                        key="nest_" + sel_ref)
                     nueva_efic = uc2.selectbox("Eficacia",
                         ['POR_VERIFICAR','EFICAZ','NO_EFICAZ'],
                         index=['POR_VERIFICAR','EFICAZ','NO_EFICAZ'].index(
                             acc_sel['eficacia'] if acc_sel['eficacia'] in ['POR_VERIFICAR','EFICAZ','NO_EFICAZ'] else 'POR_VERIFICAR'),
-                        key=f"nefic_{sel_ref}")
+                        key="nefic_" + sel_ref)
                     fecha_cierre_pa = uc3.date_input("Fecha de Cierre Real",
-                        value=datetime.date.today(), key=f"nfech_{sel_ref}")
+                        value=datetime.date.today(), key="nfech_" + sel_ref)
                     obs_pa = st.text_area("Observaciones de cierre / evidencia", height=70,
-                                         key=f"nobs_{sel_ref}")
+                                         key="nobs_" + sel_ref)
 
                     if st.form_submit_button("✅ ACTUALIZAR ACCION", type="primary"):
                         db_run("""UPDATE acciones_inmediatas SET estado=?,eficacia=?,fecha_cierre=?
                             WHERE id=?""", (nuevo_est, nueva_efic, str(fecha_cierre_pa), id_num))
-                        st.success(f"✅ Accion {sel_ref} actualizada a estado: **{nuevo_est}**")
+                        st.success("✅ Accion " + sel_ref + " actualizada a estado: **" + nuevo_est + "**")
                         st.rerun()
 
     st.markdown("---")
@@ -2905,7 +3134,7 @@ def main():
             except Exception:
                 pass
 
-        st.markdown(f"### {cfg.get('nombre_empresa','SISTEMA ACR/AFA')}")
+        st.markdown("### " + (cfg.get('nombre_empresa','SISTEMA ACR/AFA')))
         st.markdown("**Gestion Documental de Mantenimiento**")
         st.markdown("---")
 
@@ -2952,7 +3181,7 @@ def main():
         st.markdown("---")
         st.markdown("""
         <small style='color:#adb5bd'>
-        v12.0.0 | ISO 9001 · ISO 14224<br>
+        v13.0.0 | Gemini v3.x | ISO 9001 · ISO 14224<br>
         TPM · RCM · ORICA Standards<br>
         CAVA — Roger Huamani
         </small>""", unsafe_allow_html=True)
@@ -2977,3 +3206,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
