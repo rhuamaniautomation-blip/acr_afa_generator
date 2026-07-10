@@ -1470,7 +1470,9 @@ def exportar_pdf(codigo, es_acr):
         sty_ww.add('ALIGN',(fc,0),(fc,-1),'CENTER')
 
     for i, w in enumerate(whys, 1):
-        prio = (w['prioridad'] or 'MEDIA').upper()
+        prio = (w['prioridad'] or 'MEDIA').strip().upper()
+        if prio not in ['BAJA','MEDIA','ALTA','CRITICA']:
+            prio = 'MEDIA'
         fila = [
             Paragraph(str(i), est_nm),
             Paragraph(w['definicion'] or '', E['celda']),
@@ -1952,7 +1954,9 @@ def page_form():
                 index=['BORRADOR','EN_ANALISIS','REVISADO','APROBADO','RECHAZADO','CERRADO'].index(
                     d.get('estado','BORRADOR')), key="est")
             prioridad = st.selectbox("Prioridad",['BAJA','MEDIA','ALTA','CRITICA'],
-                index=['BAJA','MEDIA','ALTA','CRITICA'].index(d.get('prioridad','MEDIA')), key="prio")
+                index=['BAJA','MEDIA','ALTA','CRITICA'].index(
+                (d.get('prioridad','MEDIA') or 'MEDIA').strip().upper() if (d.get('prioridad','MEDIA') or 'MEDIA').strip().upper() in ['BAJA','MEDIA','ALTA','CRITICA'] else 'MEDIA'
+            ), key="prio")
         with c4:
             aprobado_por = st.text_input("Aprobado por", value=d.get('aprobado_por',''), key="ap")
             costo_estimado = st.number_input("Costo estimado (S/.)", min_value=0.0,
@@ -2385,8 +2389,13 @@ def _tab_why_why(codigo, es_nuevo):
     PRIO_COLS = {'BAJA':'🟢','MEDIA':'🟡','ALTA':'🟠','CRITICA':'🔴'}
 
     for i, w in enumerate(whys):
+        # Normalizar prioridad: mayúsculas, strip, default seguro
+        prio_raw = (w['prioridad'] or 'MEDIA').strip().upper()
+        if prio_raw not in ['BAJA','MEDIA','ALTA','CRITICA']:
+            prio_raw = 'MEDIA'
+
         with st.expander(
-            "**Rama " + w['rama_id'] + "** " + PRIO_COLS.get(w['prioridad'],'⚪') +
+            "**Rama " + str(w['rama_id']) + "** " + PRIO_COLS.get(prio_raw,'⚪') +
             " | Def: " + ((w['definicion'] or '—')[:50]) + "...",
             expanded=False
         ):
@@ -2416,8 +2425,12 @@ def _tab_why_why(codigo, es_nuevo):
             new_acc  = wc8.text_area("Accion sobre Causa Raiz", value=w['accion_causa_raiz'] or '', height=60, key="wacc_" + str(w['id']))
             wc9, wc10, wc11 = st.columns(3)
             new_resp = wc9.text_input("Responsable", value=w['responsable'] or '', key="wresp_" + str(w['id']))
+            # Normalizar prioridad del DB para el selectbox
+            _prio_db = (w['prioridad'] or 'MEDIA').strip().upper()
+            if _prio_db not in ['BAJA','MEDIA','ALTA','CRITICA']:
+                _prio_db = 'MEDIA'
             new_prio = wc10.selectbox("Prioridad", ['BAJA','MEDIA','ALTA','CRITICA'],
-                index=['BAJA','MEDIA','ALTA','CRITICA'].index(w['prioridad'] or 'MEDIA'),
+                index=['BAJA','MEDIA','ALTA','CRITICA'].index(_prio_db),
                 key="wprio_" + str(w['id']))
             new_fech = wc11.date_input("Fecha",
                 value=datetime.date.fromisoformat(w['fecha']) if w['fecha'] else datetime.date.today(),
@@ -2474,6 +2487,10 @@ def _tab_why_why(codigo, es_nuevo):
         rc9, rc10, rc11 = st.columns(3)
         nr_resp = rc9.text_input("Responsable")
         nr_prio = rc10.selectbox("Prioridad", ['BAJA','MEDIA','ALTA','CRITICA'], index=1)
+        # Asegurar que la prioridad se guarde normalizada
+        nr_prio = (nr_prio or 'MEDIA').strip().upper()
+        if nr_prio not in ['BAJA','MEDIA','ALTA','CRITICA']:
+            nr_prio = 'MEDIA' 
         nr_fech = rc11.date_input("Fecha", value=datetime.date.today())
         if st.form_submit_button("+ AGREGAR RAMA", type="primary"):
             if nr_def.strip():
@@ -2937,10 +2954,10 @@ def page_plan_accion():
             'accion': w['accion_causa_raiz'],
             'responsable': w['responsable'] or '—',
             'fecha': w['fecha'] or '',
-            'estado': w['estatus'] or 'PENDIENTE',
+            'estado': (w['estatus'] or 'PENDIENTE').strip().upper() if (w['estatus'] or 'PENDIENTE').strip().upper() in ['PENDIENTE','EN_PROCESO','CERRADO'] else 'PENDIENTE',
             'eficacia': '—',
             'area': w['area_equipo'] or '—',
-            'prioridad': w['prioridad'] or 'MEDIA',
+            'prioridad': (w['prioridad'] or 'MEDIA').strip().upper() if (w['prioridad'] or 'MEDIA').strip().upper() in ['BAJA','MEDIA','ALTA','CRITICA'] else 'MEDIA',
             'id_ref': "WW-" + str(w['id']),
         })
 
