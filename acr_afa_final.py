@@ -408,7 +408,7 @@ def _crear_tablas(conn):
         """CREATE TABLE IF NOT EXISTS config_ia (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             api_key TEXT,
-            modelo TEXT DEFAULT 'gemini-3.1-flash-lite',
+            modelo TEXT DEFAULT 'gemini-2.5-flash',
             temperatura REAL DEFAULT 0.3,
             max_tokens INTEGER DEFAULT 4096,
             idioma TEXT DEFAULT 'es',
@@ -439,23 +439,21 @@ def _crear_tablas(conn):
         except Exception:
             pass
     conn.commit()
-    # Migración: actualizar modelos antiguos/deprecated a modelos actuales (2026)
+    # Migración: corregir modelos inválidos guardados en config_ia
     try:
         cur = conn.execute("SELECT id, modelo FROM config_ia WHERE modelo LIKE 'gemini-3.%'")
         for row in cur.fetchall():
             modelo_invalido = row['modelo'].lower().strip()
             mapeo_db = {
-                'gemini-1.5-flash': 'gemini-3.1-flash-lite',
-                'gemini-1.5-flash-8b': 'gemini-3.1-flash-lite',
-                'gemini-1.5-pro': 'gemini-3.1-pro',
-                'gemini-2.0-flash': 'gemini-3.5-flash',
-                'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
-                'gemini-2.0-pro': 'gemini-2.5-pro',
+                'gemini-3.5-flash': 'gemini-2.5-flash',
+                'gemini-3.5-pro': 'gemini-2.5-pro',
+                'gemini-3.1-flash': 'gemini-2.5-flash',
+                'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
+                'gemini-3.1-pro': 'gemini-2.5-pro',
+                'gemini-3.0-flash': 'gemini-2.5-flash',
+                'gemini-3.0-pro': 'gemini-2.5-pro',
             }
-            if modelo_invalido in mapeo_db:
-                modelo_corregido = mapeo_db[modelo_invalido]
-            else:
-                continue
+            modelo_corregido = mapeo_db.get(modelo_invalido, 'gemini-2.5-flash')
             conn.execute("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_corregido, row['id']))
         conn.commit()
     except Exception:
@@ -472,17 +470,6 @@ def db_run(sql, params=()):
     cur = conn.execute(sql, params)
     conn.commit()
     return cur.lastrowid
-def _ensure_documento_exists(codigo, tipo='ACR'):
-    """Verifica que el documento exista en la BD. Si no, inserta un registro mínimo."""
-    doc_existe = db_one("SELECT codigo FROM documentos WHERE codigo=?", (codigo,))
-    if not doc_existe:
-        db_run("""INSERT OR IGNORE INTO documentos
-            (tipo_documento,codigo,fecha_reporte,estado,reportado_por,prioridad)
-            VALUES(?,?,?,?,?,?)""",
-            (tipo, codigo, str(datetime.date.today()), 'BORRADOR', 'Pendiente', 'MEDIA'))
-        return True
-    return False
-
 
 # ==============================================================================
 # UTILIDADES
@@ -512,21 +499,21 @@ def get_ia_cfg():
     if not row:
         return {}
     cfg = dict(row)
-    # Corregir modelos antiguos/deprecated a modelos actuales (2026)
+    # Corregir modelo inválido si existe
     modelo = cfg.get('modelo', '')
-    if modelo:
+    if modelo and 'gemini-3.' in modelo.lower():
         mapeo_cfg = {
-            'gemini-1.5-flash': 'gemini-3.1-flash-lite',
-            'gemini-1.5-flash-8b': 'gemini-3.1-flash-lite',
-            'gemini-1.5-pro': 'gemini-3.1-pro',
-            'gemini-2.0-flash': 'gemini-3.5-flash',
-            'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
-            'gemini-2.0-pro': 'gemini-2.5-pro',
+            'gemini-3.5-flash': 'gemini-2.5-flash',
+            'gemini-3.5-pro': 'gemini-2.5-pro',
+            'gemini-3.1-flash': 'gemini-2.5-flash',
+            'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
+            'gemini-3.1-pro': 'gemini-2.5-pro',
+            'gemini-3.0-flash': 'gemini-2.5-flash',
+            'gemini-3.0-pro': 'gemini-2.5-pro',
         }
-        modelo_limpio = modelo.lower().strip()
-        if modelo_limpio in mapeo_cfg:
-            cfg['modelo'] = mapeo_cfg[modelo_limpio]
-            db_run("UPDATE config_ia SET modelo=? WHERE id=?", (cfg['modelo'], cfg['id']))
+        cfg['modelo'] = mapeo_cfg.get(modelo.lower().strip(), 'gemini-2.5-flash')
+        # Actualizar también en la BD
+        db_run("UPDATE config_ia SET modelo=? WHERE id=?", (cfg['modelo'], cfg['id']))
     return cfg
 
 def save_ia_cfg(cfg_dict):
@@ -537,7 +524,7 @@ def save_ia_cfg(cfg_dict):
             idioma=?, estilo_redaccion=?, nivel_detalle=?,
             activar_correccion=?, activar_humanizar=?, prompt_personalizado=?
             WHERE id=?""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-3.1-flash-lite'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-2.5-flash'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
@@ -548,7 +535,7 @@ def save_ia_cfg(cfg_dict):
             (api_key,modelo,temperatura,max_tokens,idioma,estilo_redaccion,
              nivel_detalle,activar_correccion,activar_humanizar,prompt_personalizado)
             VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-3.1-flash-lite'),
+            (cfg_dict.get('api_key',''), cfg_dict.get('modelo','gemini-2.5-flash'),
              cfg_dict.get('temperatura',0.3), cfg_dict.get('max_tokens',4096),
              cfg_dict.get('idioma','es'), cfg_dict.get('estilo_redaccion','tecnico_profesional'),
              cfg_dict.get('nivel_detalle','detallado'),
@@ -564,39 +551,14 @@ print("Parte 1 generada correctamente")
 class GeminiEngine:
     """Motor de IA para autocompletar campos ACR/AFA con Gemini."""
 
-    # Modelos válidos soportados por la API de Gemini (SDK google.genai, 2026)
-    # Basado en documentación oficial: https://github.com/googleapis/python-genai
+    # Modelos válidos soportados por la API de Gemini
     MODELOS_VALIDOS = [
-        # Gemini 3.x series (modelos actuales, disponibles en web y API)
-        'gemini-3.5-flash',        # Nuevo modelo Flash, free tier disponible
-        'gemini-3.1-pro',           # Flagship reasoning, 2M context
-        'gemini-3.1-flash-lite',    # Cost-efficient, respuestas rápidas, GRATUITO
-        'gemini-3.1-flash-image',   # Generación de imágenes
-        'gemini-3.1-flash',         # Modelo Flash estándar
-        'gemini-3.1-flash-tts',     # Text-to-speech
-        # Gemini 2.5 series (modelos anteriores, aún disponibles)
-        'gemini-2.5-pro',           # Reasoning avanzado
-        'gemini-2.5-flash',         # Balance velocidad/calidad
-        'gemini-2.5-flash-lite',    # Más económico
-        'gemini-2.5-pro-tts',       # Text-to-speech
+        'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro',
+        'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.0-pro',
+        'gemini-1.5-flash', 'gemini-1.5-pro'
     ]
 
-    # Cadena de fallback: ordenados por prioridad para el usuario
-    # 1. Modelos gratuitos (Flash-Lite)
-    # 2. Modelos Flash (balance)
-    # 3. Modelos Pro (máxima calidad)
-    FALLBACK_CHAIN = [
-        'gemini-3.1-flash-lite',    # GRATUITO, ilimitado en web, free tier API
-        'gemini-3.5-flash',         # Nuevo, mejor que 3.1, free tier disponible
-        'gemini-3.1-flash',         # Flash estándar
-        'gemini-2.5-flash',         # Modelo anterior, aún disponible
-        'gemini-2.5-flash-lite',    # Muy económico
-        'gemini-3.1-pro',           # Flagship, calidad máxima (puede ser paid-only)
-        'gemini-2.5-pro',           # Pro anterior, aún disponible
-    ]
-
-    def __init__(self, api_key=None, modelo='gemini-3.1-flash-lite'):
-        """Inicializa el motor de IA Gemini."""
+    def __init__(self, api_key=None, modelo='gemini-2.5-flash'):
         self.api_key = api_key
         self.modelo = self._validar_modelo(modelo)
         self.client = None
@@ -608,52 +570,37 @@ class GeminiEngine:
                 st.error(f"Error inicializando Gemini: {e}")
 
     def _validar_modelo(self, modelo):
-        """Valida y corrige el nombre del modelo."""
+        '''Corrige automáticamente nombres de modelos inválidos.'''
         if not modelo:
-            return 'gemini-3.1-flash-lite'
-
-        modelo_limpio = modelo.strip().lower()
-
-        # Si ya es un modelo válido actual, usarlo tal cual
-        if modelo_limpio in self.MODELOS_VALIDOS:
-            return modelo_limpio
-
-        # Mapeo de nombres legacy/incorrectos a nombres actuales
-        mapeo_legacy = {
-            'gemini-1.5-flash': 'gemini-3.1-flash-lite',
-            'gemini-1.5-flash-8b': 'gemini-3.1-flash-lite',
-            'gemini-1.5-pro': 'gemini-3.1-pro',
-            'gemini-2.0-flash': 'gemini-3.5-flash',
-            'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
-            'gemini-2.0-pro': 'gemini-2.5-pro',
-            'gemini-3.5-flash-latest': 'gemini-3.5-flash',
-            'gemini-3.1-pro-latest': 'gemini-3.1-pro',
-            'gemini-3.1-flash-lite-latest': 'gemini-3.1-flash-lite',
-            'gemini-flash-latest': 'gemini-3.5-flash',
-            'gemini-pro-latest': 'gemini-3.1-pro',
-            '3.1 flash-lite': 'gemini-3.1-flash-lite',
-            '3.5 flash': 'gemini-3.5-flash',
-            '3.1 pro': 'gemini-3.1-pro',
-            'flash-lite': 'gemini-3.1-flash-lite',
-            'flash': 'gemini-3.5-flash',
-            'pro': 'gemini-3.1-pro',
+            return 'gemini-2.5-flash'
+        modelo = modelo.strip().lower()
+        # Si ya es válido, retornar tal cual
+        if modelo in self.MODELOS_VALIDOS:
+            return modelo
+        # Mapear modelos inválidos conocidos
+        mapeo = {
+            'gemini-3.5-flash': 'gemini-2.5-flash',
+            'gemini-3.5-pro': 'gemini-2.5-pro',
+            'gemini-3.1-flash': 'gemini-2.5-flash',
+            'gemini-3.1-flash-lite': 'gemini-2.5-flash-lite',
+            'gemini-3.1-pro': 'gemini-2.5-pro',
+            'gemini-3.0-flash': 'gemini-2.5-flash',
+            'gemini-3.0-pro': 'gemini-2.5-pro',
         }
-
-        if modelo_limpio in mapeo_legacy:
-            modelo_corregido = mapeo_legacy[modelo_limpio]
-            st.info(f"Modelo '{modelo}' actualizado a '{modelo_corregido}' (version 2026)")
-            return modelo_corregido
-
-        st.warning(f"Modelo '{modelo}' no reconocido. Usando 'gemini-3.1-flash-lite' (gratuito).")
-        return 'gemini-3.1-flash-lite'
+        if modelo in mapeo:
+            return mapeo[modelo]
+        # Si no está en la lista de válidos ni en el mapeo, usar default
+        return 'gemini-2.5-flash'
 
     def is_ready(self):
         return self.client is not None and GEMINI_AVAILABLE
 
     def _imagen_a_base64(self, bytes_img):
+        """Convierte bytes de imagen a base64 para enviar a Gemini."""
         return base64.b64encode(bytes_img).decode('utf-8')
 
     def _detectar_formato_imagen(self, bytes_img):
+        """Detecta el formato de imagen a partir de los bytes."""
         if bytes_img[:8] == b'\x89PNG\r\n\x1a\n':
             return 'png'
         elif bytes_img[:2] == b'\xff\xd8':
@@ -664,120 +611,83 @@ class GeminiEngine:
             return 'webp'
         elif bytes_img[:4] == b'\x42\x4d':
             return 'bmp'
-        return 'jpeg'
+        return 'jpeg'  # default
 
-    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None, max_retries=2, fallback_attempts=None):
-        """Llama a Gemini con retry, backoff y fallback automático de modelos."""
+    def _call_gemini(self, prompt, system_instruction=None, temperature=0.3, archivos_adjuntos=None):
+        """Llama a Gemini con el prompt dado, opcionalmente con archivos adjuntos (imagenes/PDF)."""
         if not self.is_ready():
             return None
+        try:
+            # Importar GenerateContentConfig si está disponible
+            try:
+                from google.genai.types import GenerateContentConfig
+                HAS_CONFIG = True
+            except ImportError:
+                HAS_CONFIG = False
 
-        import time
+            # Crear configuración de generación
+            if HAS_CONFIG:
+                gen_config = GenerateContentConfig(temperature=temperature)
+            else:
+                gen_config = None
 
-        if fallback_attempts is None:
-            fallback_attempts = list(self.FALLBACK_CHAIN)
-            if self.modelo in fallback_attempts:
-                fallback_attempts.remove(self.modelo)
-            fallback_attempts.insert(0, self.modelo)
+            # Construir contenido multimodal si hay archivos adjuntos
+            if archivos_adjuntos and len(archivos_adjuntos) > 0:
+                contenido = []
+                # Agregar el prompt de texto primero
+                contenido.append({"text": prompt})
 
-        rate_limit_count = 0
-        not_found_count = 0
-        errores_detalle = []
+                # Agregar cada archivo adjunto
+                for archivo in archivos_adjuntos:
+                    if archivo['tipo'] == 'imagen':
+                        formato = self._detectar_formato_imagen(archivo['bytes'])
+                        b64 = self._imagen_a_base64(archivo['bytes'])
+                        contenido.append({
+                            "inline_data": {
+                                "mime_type": f"image/{formato}",
+                                "data": b64
+                            }
+                        })
+                    elif archivo['tipo'] == 'pdf':
+                        # Para PDF, Gemini puede procesar texto extraido o el PDF directo
+                        b64 = self._imagen_a_base64(archivo['bytes'])
+                        contenido.append({
+                            "inline_data": {
+                                "mime_type": "application/pdf",
+                                "data": b64
+                            }
+                        })
 
-        for model_idx, current_model in enumerate(fallback_attempts):
-            for attempt in range(max_retries):
-                try:
-                    try:
-                        from google.genai.types import GenerateContentConfig
-                        HAS_CONFIG = True
-                    except ImportError:
-                        HAS_CONFIG = False
-
-                    if HAS_CONFIG:
-                        gen_config = GenerateContentConfig(temperature=temperature)
-                    else:
-                        gen_config = None
-
-                    if archivos_adjuntos and len(archivos_adjuntos) > 0:
-                        contenido = []
-                        contenido.append({"text": prompt})
-                        for archivo in archivos_adjuntos:
-                            if archivo['tipo'] == 'imagen':
-                                formato = self._detectar_formato_imagen(archivo['bytes'])
-                                b64 = self._imagen_a_base64(archivo['bytes'])
-                                contenido.append({"inline_data": {"mime_type": f"image/{formato}", "data": b64}})
-                            elif archivo['tipo'] == 'pdf':
-                                b64 = self._imagen_a_base64(archivo['bytes'])
-                                contenido.append({"inline_data": {"mime_type": "application/pdf", "data": b64}})
-                        if gen_config:
-                            response = self.client.models.generate_content(model=current_model, contents=contenido, config=gen_config)
-                        else:
-                            response = self.client.models.generate_content(model=current_model, contents=contenido)
-                        return response.text
-                    else:
-                        if gen_config:
-                            response = self.client.models.generate_content(model=current_model, contents=prompt, config=gen_config)
-                        else:
-                            response = self.client.models.generate_content(model=current_model, contents=prompt)
-                        return response.text
-
-                except Exception as e:
-                    error_msg = str(e)
-                    errores_detalle.append(f"{current_model}: {error_msg}")
-
-                    is_rate_limit = '429' in error_msg or 'RESOURCE_EXHAUSTED' in error_msg or 'quota' in error_msg.lower() or 'rate limit' in error_msg.lower()
-                    is_not_found = '404' in error_msg or 'NOT_FOUND' in error_msg or 'not found' in error_msg.lower() or 'Model' in error_msg and 'not found' in error_msg
-                    is_auth_error = '403' in error_msg or 'PERMISSION_DENIED' in error_msg or 'API key' in error_msg or 'Unauthorized' in error_msg or 'invalid' in error_msg.lower()
-                    is_deprecated = 'deprecated' in error_msg.lower() or 'shut down' in error_msg.lower() or 'no longer available' in error_msg.lower()
-
-                    if is_rate_limit:
-                        rate_limit_count += 1
-                        if attempt < max_retries - 1:
-                            wait_time = (2 ** attempt) * 2 + 1
-                            st.warning(f"Modelo {current_model}: cuota excedida. Reintentando en {wait_time}s... (intento {attempt + 1}/{max_retries})")
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            if model_idx < len(fallback_attempts) - 1:
-                                next_model = fallback_attempts[model_idx + 1]
-                                st.info(f"Cambiando a modelo alternativo: {next_model}")
-                                break
-
-                    elif is_not_found or is_deprecated:
-                        not_found_count += 1
-                        if model_idx < len(fallback_attempts) - 1:
-                            next_model = fallback_attempts[model_idx + 1]
-                            st.info(f"Modelo {current_model} no disponible. Intentando con: {next_model}")
-                            break
-
-                    elif is_auth_error:
-                        st.error(f"Error de autenticacion con la API de Gemini. Verifica tu API Key en Configuracion IA.")
-                        st.info(f"Detalle del error: {error_msg}")
-                        return None
-
-                    else:
-                        if attempt < max_retries - 1:
-                            st.warning(f"Error temporal con {current_model}. Reintentando... ({attempt + 1}/{max_retries})")
-                            time.sleep(2 ** attempt)
-                            continue
-                        if model_idx < len(fallback_attempts) - 1:
-                            break
-
-        # TODOS los modelos fallaron
-        if rate_limit_count >= len(fallback_attempts) * max_retries:
-            st.error("Cuota agotada en TODOS los modelos de Gemini. Tu API Key esta en el plan gratuito (free tier) y ha alcanzado el limite de uso diario.")
-            st.info("Soluciones: 1) Espera 24 horas para reinicio de cuota. 2) Configura facturacion en Google AI Studio. 3) Usa el modo manual.")
-            for err in errores_detalle:
-                st.caption(f"  - {err}")
-        elif not_found_count >= len(fallback_attempts):
-            st.error("Ningun modelo de Gemini esta disponible con tu API Key. Verifica que la API 'Generative Language API' este habilitada en tu proyecto de Google Cloud.")
-            for err in errores_detalle:
-                st.caption(f"  - {err}")
-        else:
-            st.error(f"No se pudo conectar con ningun modelo de Gemini. Se intentaron {len(fallback_attempts)} modelos alternativos sin exito.")
-            for err in errores_detalle:
-                st.caption(f"  - {err}")
-
-        return None
+                # Usar contenido multimodal con la API correcta
+                if gen_config:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=contenido,
+                        config=gen_config
+                    )
+                else:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=contenido
+                    )
+                return response.text
+            else:
+                # Llamada solo con texto
+                if gen_config:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=prompt,
+                        config=gen_config
+                    )
+                else:
+                    response = self.client.models.generate_content(
+                        model=self.modelo,
+                        contents=prompt
+                    )
+                return response.text
+        except Exception as e:
+            st.error(f"Error en llamada Gemini: {e}")
+            return None
 
     def generar_acr_completo(self, contexto_problema, tipo='ACR', archivos_adjuntos=None):
         """Genera un ACR/AFA completo a partir del contexto del problema y archivos adjuntos."""
@@ -785,6 +695,7 @@ class GeminiEngine:
         estilo = ia_cfg.get('estilo_redaccion', 'tecnico_profesional')
         detalle = ia_cfg.get('nivel_detalle', 'detallado')
 
+        # Construir instrucciones sobre archivos adjuntos
         instrucciones_archivos = ""
         if archivos_adjuntos and len(archivos_adjuntos) > 0:
             tipos_archivos = []
@@ -799,7 +710,7 @@ class GeminiEngine:
         - Identificar componentes, equipos, condiciones visibles en las fotos
         - Leer procedimientos, manuales o diagramas en los PDFs adjuntos
         - Correlacionar lo que ves en las imagenes con el contexto descrito
-        - Identificar posibles causas visibles (desgaste, corrosion, fugas, danos, etc.)
+        - Identificar posibles causas visibles (desgaste, corrosion, fugas, daños, etc.)
         - Extraer datos tecnicos relevantes de los documentos adjuntos
         - Usar la informacion visual y documental para fundamentar mejor tus analisis de 5W+2H y 5 Porques
         """
@@ -832,10 +743,6 @@ class GeminiEngine:
             "cuando": "...",
             "cual": "...",
             "problema_enfocado": "...",
-            "causa_raiz_identificada": "...",
-            "verificacion_causa": "...",
-            "evidencia_causa": "...",
-            "observaciones_cierre": "...",
             "ramas_why_why": [
                 {{
                     "definicion": "...",
@@ -930,7 +837,9 @@ class GeminiEngine:
         respuesta = self._call_gemini(prompt, temperature=0.1)
         return respuesta if respuesta else texto
 
-
+# ==============================================================================
+# CORRECCION ORTOGRAFICA CON LANGUAGE TOOL
+# ==============================================================================
 class OrtografiaEngine:
     """Motor de correccion ortografica usando LanguageTool."""
 
@@ -975,7 +884,7 @@ def corregir_texto(texto, usar_ia=True):
 
     if usar_ia:
         api_key = ia_cfg.get('api_key', '')
-        modelo = ia_cfg.get('modelo', 'gemini-3.1-flash-lite')
+        modelo = ia_cfg.get('modelo', 'gemini-2.5-flash')
         if api_key:
             gemini = GeminiEngine(api_key, modelo)
             if gemini.is_ready():
@@ -995,7 +904,7 @@ def humanizar_texto(texto):
         return texto
 
     api_key = ia_cfg.get('api_key', '')
-    modelo = ia_cfg.get('modelo', 'gemini-3.1-flash-lite')
+    modelo = ia_cfg.get('modelo', 'gemini-2.5-flash')
     if api_key:
         gemini = GeminiEngine(api_key, modelo)
         if gemini.is_ready():
@@ -1705,7 +1614,7 @@ def page_form():
         generar_ia = col_gen.button("🤖 GENERAR DOCUMENTO CON IA", type="primary", use_container_width=True)
 
         with col_cfg:
-            st.caption(f"Modelo: {ia_cfg.get('modelo','gemini-3.1-flash-lite')} | Correccion: {'✅' if ia_cfg.get('activar_correccion') else '❌'} | Humanizar: {'✅' if ia_cfg.get('activar_humanizar') else '❌'}")
+            st.caption(f"Modelo: {ia_cfg.get('modelo','gemini-2.5-flash')} | Correccion: {'✅' if ia_cfg.get('activar_correccion') else '❌'} | Humanizar: {'✅' if ia_cfg.get('activar_humanizar') else '❌'}")
 
         if generar_ia:
             if not api_key:
@@ -1717,7 +1626,7 @@ def page_form():
                 num_archivos = len(archivos_adjuntos)
                 mensaje_procesando = f"🤖 La IA esta analizando el problema y {num_archivos} archivo(s) adjunto(s)... Esto puede tomar 30-90 segundos." if num_archivos > 0 else "🤖 La IA esta analizando el problema y generando el documento completo... Esto puede tomar 30-60 segundos."
                 with st.spinner(mensaje_procesando):
-                    gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-3.1-flash-lite'))
+                    gemini = GeminiEngine(api_key, ia_cfg.get('modelo','gemini-2.5-flash'))
                     resultado = gemini.generar_acr_completo(contexto_ia, tipo, archivos_adjuntos=archivos_adjuntos)
 
                 if resultado:
@@ -1727,26 +1636,7 @@ def page_form():
                     st.success("✅ Documento generado por IA. Revise y ajuste los campos en las pestanas.")
                     st.rerun()
                 else:
-                    st.error("""
-❌ **La IA no pudo generar el documento automáticamente.**
-
-Esto suele ocurrir por una de estas razones:
-
-1. **Cuota agotada** — Tu API Key gratuita alcanzó el límite diario (1,000 requests/día). 
-   → Espera 24 horas o configura facturación en Google AI Studio.
-
-2. **API Key inválida** — La clave no tiene acceso a los modelos de Gemini.
-   → Genera una nueva en https://aistudio.google.com/app/apikey
-
-3. **Problema de red** — Error temporal de conexión con los servidores de Google.
-   → Intenta de nuevo en unos minutos.
-
-**💡 Puedes continuar completando el documento manualmente.** 
-Tu descripción del problema se ha guardado. Ve a las pestañas para ingresar los datos.
-                    """)
-                    # Guardar el contexto del usuario para que no lo pierda
-                    st.session_state['contexto_manual'] = contexto_ia
-                    st.session_state['ia_fallo'] = True
+                    st.error("❌ La IA no pudo generar el documento. Verifique su API Key e intente de nuevo.")
 
     # Aplicar resultados de IA
     ia_resultado = st.session_state.get('ia_resultado')
@@ -1775,29 +1665,15 @@ Tu descripción del problema se ha guardado. Ve a las pestañas para ingresar lo
             if v:
                 campos_ia[k] = procesar_texto_final(v)
 
-        # Campos de cierre
-        campos_cierre = {
-            'causa_raiz_identificada': ia_resultado.get('causa_raiz_identificada', ''),
-            'verificacion_causa': ia_resultado.get('verificacion_causa', ''),
-            'evidencia_causa': ia_resultado.get('evidencia_causa', ''),
-            'observaciones_cierre': ia_resultado.get('observaciones_cierre', ''),
-        }
-        for k, v in campos_cierre.items():
-            if v:
-                campos_cierre[k] = procesar_texto_final(v)
-
         db_run("""UPDATE documentos SET
             desc_problema_inicial=?, que_contexto=?, como_ocurre=?,
             quien=?, donde=?, cuanto=?, cuando=?, cual=?,
-            problema_enfocado=?, causa_raiz_identificada=?, verificacion_causa=?,
-            evidencia_causa=?, observaciones_cierre=?, ultima_modificacion=CURRENT_TIMESTAMP
+            problema_enfocado=?, ultima_modificacion=CURRENT_TIMESTAMP
             WHERE codigo=?""",
             (campos_ia['desc_problema_inicial'], campos_ia['que_contexto'],
              campos_ia['como_ocurre'], campos_ia['quien'], campos_ia['donde'],
              campos_ia['cuanto'], campos_ia['cuando'], campos_ia['cual'],
-             campos_ia['problema_enfocado'], campos_cierre['causa_raiz_identificada'],
-             campos_cierre['verificacion_causa'], campos_cierre['evidencia_causa'],
-             campos_cierre['observaciones_cierre'], codigo))
+             campos_ia['problema_enfocado'], codigo))
 
         for i, rama in enumerate(ia_resultado.get('ramas_why_why', []), 1):
             rama_corregida = {k: procesar_texto_final(v) if isinstance(v, str) else v 
@@ -1840,16 +1716,11 @@ Tu descripción del problema se ha guardado. Ve a las pestañas para ingresar lo
         del st.session_state['ia_codigo']
         del st.session_state['ia_tipo']
 
-        st.session_state['ia_aplicado_' + codigo] = True
-        st.success("✅ Campos de IA aplicados. Puede editarlos manualmente en las pestanas.")
-        st.rerun()
-
-    # ── Recargar datos si se aplicó IA ────────────────────────────────────────
-    if st.session_state.get('ia_aplicado_' + codigo):
         row = db_one("SELECT * FROM documentos WHERE codigo=?", (codigo,))
         if row:
             d = dict(row)
-        del st.session_state['ia_aplicado_' + codigo]
+        st.success("✅ Campos de IA aplicados. Puede editarlos manualmente en las pestanas.")
+        st.rerun()
 
     # ── TABS ──────────────────────────────────────────────────────────────────
     if tipo == 'ACR':
@@ -1916,23 +1787,10 @@ Tu descripción del problema se ha guardado. Ve a las pestañas para ingresar lo
                 ses_part = sc5.text_area("Participantes", height=60)
                 ses_obs  = st.text_area("Observaciones", height=60)
                 if st.form_submit_button("+ Agregar Sesion", type="primary"):
-                    # Verificar si el documento existe en la BD antes de insertar sesión
-                    doc_existe = db_one("SELECT codigo FROM documentos WHERE codigo=?", (codigo,))
-                    if not doc_existe:
-                        # El documento aún no existe, insertar un registro mínimo
-                        db_run("""INSERT OR IGNORE INTO documentos
-                            (tipo_documento,codigo,fecha_reporte,estado,reportado_por,prioridad)
-                            VALUES(?,?,?,?,?,?)""",
-                            (tipo, codigo, str(datetime.date.today()), 'BORRADOR', 'Pendiente', 'MEDIA'))
-
-                    try:
-                        db_run("INSERT OR REPLACE INTO sesiones_acr (codigo_acr,sesion_num,fecha,hora_inicio,duracion,participantes,observaciones) VALUES(?,?,?,?,?,?,?)",
-                               (codigo, ses_num, str(ses_fech), ses_hora, ses_dur, ses_part, ses_obs))
-                        st.success("✅ Sesion agregada correctamente.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error al guardar la sesión: {e}")
-                        st.info("💡 Guarda primero los 'Datos Generales' del documento y luego intenta agregar la sesión.")
+                    db_run("INSERT INTO sesiones_acr (codigo_acr,sesion_num,fecha,hora_inicio,duracion,participantes,observaciones) VALUES(?,?,?,?,?,?,?)",
+                           (codigo, ses_num, str(ses_fech), ses_hora, ses_dur, ses_part, ses_obs))
+                    st.success("Sesion agregada.")
+                    st.rerun()
 
             if sesiones_db:
                 st.dataframe(
@@ -1945,9 +1803,6 @@ Tu descripción del problema se ha guardado. Ve a las pestañas para ingresar lo
             _save_doc_general(codigo, tipo, es_nuevo, locals())
             st.session_state['doc_codigo'] = codigo
             st.session_state['es_nuevo_guardado'] = False
-            # Limpiar flags de fallo de IA para no mostrar mensajes obsoletos
-            st.session_state.pop('ia_fallo', None)
-            st.session_state.pop('contexto_manual', None)
             st.success(f"✅ Guardado correctamente. Codigo: `{codigo}`")
             st.rerun()
 
@@ -2023,14 +1878,8 @@ print("Parte 4 generada correctamente")
 def _tab_problema(codigo, d, tipo, es_nuevo):
     st.markdown('<div class="seccion-band">2. DESCRIPCION DEL PROBLEMA</div>', unsafe_allow_html=True)
 
-    # Si la IA falló y hay contexto manual guardado, pre-rellenar la descripción
-    desc_default = d.get('desc_problema_inicial','')
-    if not desc_default and st.session_state.get('ia_fallo') and st.session_state.get('contexto_manual'):
-        desc_default = st.session_state.get('contexto_manual','')
-        st.info("💡 El contexto que describiste se ha pre-rellenado aquí. Puedes editarlo y completar el resto del formulario manualmente.")
-
     desc_inicial = st.text_area("1. Descripcion del problema inicial",
-        value=desc_default, height=100, key="dpi")
+        value=d.get('desc_problema_inicial',''), height=100, key="dpi")
 
     col_corr1, col_corr2 = st.columns([1, 5])
     if col_corr1.button("✏️ Corregir", key="corr_desc"):
@@ -2120,7 +1969,6 @@ def _upload_imagenes_inline(codigo, seccion, es_nuevo):
             type=['png','jpg','jpeg','bmp','gif'],
             key=f"uploader_{seccion}")
         if st.button("+ Agregar imagen", key=f"btn_img_{seccion}") and uploaded:
-            _ensure_documento_exists(codigo, tipo)
             img_b = uploaded.read()
             fmt = "." + uploaded.name.split('.')[-1].lower()
             db_run("""INSERT INTO evidencias
@@ -2173,7 +2021,6 @@ def _seccion_acciones_inmediatas(codigo, es_nuevo):
         c_sub, c_del = st.columns(2)
         submitted = c_sub.form_submit_button("+ AGREGAR ACCION", type="primary")
         if submitted and accion_txt.strip():
-            _ensure_documento_exists(codigo, tipo)
             db_run("""INSERT INTO acciones_inmediatas
                 (codigo_acr,accion,responsable,fecha,estado,eficacia)
                 VALUES(?,?,?,?,?,?)""",
@@ -2436,7 +2283,6 @@ def _tab_why_why(codigo, es_nuevo):
         nr_fech = rc11.date_input("Fecha", value=datetime.date.today())
         if st.form_submit_button("+ AGREGAR RAMA", type="primary"):
             if nr_def.strip():
-                _ensure_documento_exists(codigo, tipo)
                 db_run("""INSERT INTO why_why
                     (codigo_documento,rama_id,definicion,pq1,pq2,pq3,pq4,pq5,
                      causa_raiz,accion_causa_raiz,responsable,prioridad,fecha)
@@ -2495,7 +2341,6 @@ def _tab_anexos(codigo, es_nuevo):
             type=['png','jpg','jpeg','bmp','gif','pdf'])
         if st.form_submit_button("+ Agregar Evidencia", type="primary"):
             if uploaded_anx:
-                _ensure_documento_exists(codigo, tipo)
                 img_b = uploaded_anx.read()
                 fmt = "." + uploaded_anx.name.split('.')[-1].lower()
                 db_run("""INSERT INTO evidencias
@@ -2606,20 +2451,10 @@ def page_config_ia():
     st.markdown("Configure la API de Gemini y los parametros de generacion de texto.")
 
     ia_cfg = get_ia_cfg()
-    # Asegurar que el modelo guardado sea válido (2026)
-    modelo_guardado = ia_cfg.get('modelo', 'gemini-3.1-flash-lite')
-    # Si el modelo guardado es legacy (antiguo), actualizarlo
-    mapeo_legacy = {
-        'gemini-1.5-flash': 'gemini-3.1-flash-lite',
-        'gemini-1.5-flash-8b': 'gemini-3.1-flash-lite',
-        'gemini-1.5-pro': 'gemini-3.1-pro',
-        'gemini-2.0-flash': 'gemini-3.5-flash',
-        'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
-        'gemini-2.0-pro': 'gemini-2.5-pro',
-    }
-    modelo_limpio = modelo_guardado.lower().strip()
-    if modelo_limpio in mapeo_legacy:
-        modelo_guardado = mapeo_legacy[modelo_limpio]
+    # Asegurar que el modelo guardado sea válido
+    modelo_guardado = ia_cfg.get('modelo', 'gemini-2.5-flash')
+    if 'gemini-3.' in modelo_guardado.lower():
+        modelo_guardado = 'gemini-2.5-flash'
         ia_cfg['modelo'] = modelo_guardado
         db_run("UPDATE config_ia SET modelo=? WHERE id=?", (modelo_guardado, ia_cfg['id']))
 
@@ -2632,25 +2467,10 @@ def page_config_ia():
 
         st.markdown("**Parametros del Modelo**")
         c1, c2, c3 = st.columns(3)
-        # Lista de modelos disponibles (2026)
-        modelos_disponibles = ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-3.1-flash', 'gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']
-
-        # Obtener modelo guardado, con fallback a default
-        modelo_guardado = ia_cfg.get('modelo', 'gemini-3.1-flash-lite')
-
-        # Si el modelo guardado no está en la lista actual (es legacy), usar default
-        if modelo_guardado not in modelos_disponibles:
-            modelo_guardado = 'gemini-3.1-flash-lite'
-
-        # Calcular índice de forma segura
-        try:
-            idx_modelo = modelos_disponibles.index(modelo_guardado)
-        except ValueError:
-            idx_modelo = 0
-
         modelo = c1.selectbox("Modelo Gemini",
-            modelos_disponibles,
-            index=idx_modelo)
+            ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+            index=['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'].index(
+                ia_cfg.get('modelo','gemini-2.5-flash')) if ia_cfg.get('modelo') in ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'] else 0)
         temperatura = c2.slider("Temperatura (creatividad)", 0.0, 1.0, 
             float(ia_cfg.get('temperatura',0.3)), 0.1,
             help="0 = muy preciso, 1 = muy creativo")
@@ -2712,7 +2532,7 @@ def page_config_ia():
             with st.spinner("Probando conexion..."):
                 gemini = GeminiEngine(api_key, modelo)
                 if gemini.is_ready():
-                    st.success(f"✅ Conexion exitosa con Gemini! Modelo: {gemini.modelo}")
+                    st.success("✅ Conexion exitosa con Gemini!")
                 else:
                     st.error("❌ No se pudo conectar con Gemini. Verifique su API Key.")
 
@@ -3093,8 +2913,6 @@ def main():
         if st.button("🏠 Dashboard", use_container_width=True):
             st.session_state['pagina'] = 'dashboard'
             st.session_state['doc_codigo'] = None
-            st.session_state.pop('ia_fallo', None)
-            st.session_state.pop('contexto_manual', None)
             st.rerun()
 
         if st.button("📋 Todos los Documentos", use_container_width=True):
