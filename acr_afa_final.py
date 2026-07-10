@@ -470,6 +470,17 @@ def db_run(sql, params=()):
     cur = conn.execute(sql, params)
     conn.commit()
     return cur.lastrowid
+def _ensure_documento_exists(codigo, tipo='ACR'):
+    """Verifica que el documento exista en la BD. Si no, inserta un registro mínimo."""
+    doc_existe = db_one("SELECT codigo FROM documentos WHERE codigo=?", (codigo,))
+    if not doc_existe:
+        db_run("""INSERT OR IGNORE INTO documentos
+            (tipo_documento,codigo,fecha_reporte,estado,reportado_por,prioridad)
+            VALUES(?,?,?,?,?,?)""",
+            (tipo, codigo, str(datetime.date.today()), 'BORRADOR', 'Pendiente', 'MEDIA'))
+        return True
+    return False
+
 
 # ==============================================================================
 # UTILIDADES
@@ -1943,10 +1954,23 @@ Tu descripción del problema se ha guardado. Ve a las pestañas para ingresar lo
                 ses_part = sc5.text_area("Participantes", height=60)
                 ses_obs  = st.text_area("Observaciones", height=60)
                 if st.form_submit_button("+ Agregar Sesion", type="primary"):
-                    db_run("INSERT OR REPLACE INTO sesiones_acr (codigo_acr,sesion_num,fecha,hora_inicio,duracion,participantes,observaciones) VALUES(?,?,?,?,?,?,?)",
-                           (codigo, ses_num, str(ses_fech), ses_hora, ses_dur, ses_part, ses_obs))
-                    st.success("Sesion agregada.")
-                    st.rerun()
+                    # Verificar si el documento existe en la BD antes de insertar sesión
+                    doc_existe = db_one("SELECT codigo FROM documentos WHERE codigo=?", (codigo,))
+                    if not doc_existe:
+                        # El documento aún no existe, insertar un registro mínimo
+                        db_run("""INSERT OR IGNORE INTO documentos
+                            (tipo_documento,codigo,fecha_reporte,estado,reportado_por,prioridad)
+                            VALUES(?,?,?,?,?,?)""",
+                            (tipo, codigo, str(datetime.date.today()), 'BORRADOR', 'Pendiente', 'MEDIA'))
+
+                    try:
+                        db_run("INSERT OR REPLACE INTO sesiones_acr (codigo_acr,sesion_num,fecha,hora_inicio,duracion,participantes,observaciones) VALUES(?,?,?,?,?,?,?)",
+                               (codigo, ses_num, str(ses_fech), ses_hora, ses_dur, ses_part, ses_obs))
+                        st.success("✅ Sesion agregada correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar la sesión: {e}")
+                        st.info("💡 Guarda primero los 'Datos Generales' del documento y luego intenta agregar la sesión.")
 
             if sesiones_db:
                 st.dataframe(
@@ -2134,6 +2158,7 @@ def _upload_imagenes_inline(codigo, seccion, es_nuevo):
             type=['png','jpg','jpeg','bmp','gif'],
             key=f"uploader_{seccion}")
         if st.button("+ Agregar imagen", key=f"btn_img_{seccion}") and uploaded:
+            _ensure_documento_exists(codigo, tipo)
             img_b = uploaded.read()
             fmt = "." + uploaded.name.split('.')[-1].lower()
             db_run("""INSERT INTO evidencias
@@ -2186,6 +2211,7 @@ def _seccion_acciones_inmediatas(codigo, es_nuevo):
         c_sub, c_del = st.columns(2)
         submitted = c_sub.form_submit_button("+ AGREGAR ACCION", type="primary")
         if submitted and accion_txt.strip():
+            _ensure_documento_exists(codigo, tipo)
             db_run("""INSERT INTO acciones_inmediatas
                 (codigo_acr,accion,responsable,fecha,estado,eficacia)
                 VALUES(?,?,?,?,?,?)""",
@@ -2448,6 +2474,7 @@ def _tab_why_why(codigo, es_nuevo):
         nr_fech = rc11.date_input("Fecha", value=datetime.date.today())
         if st.form_submit_button("+ AGREGAR RAMA", type="primary"):
             if nr_def.strip():
+                _ensure_documento_exists(codigo, tipo)
                 db_run("""INSERT INTO why_why
                     (codigo_documento,rama_id,definicion,pq1,pq2,pq3,pq4,pq5,
                      causa_raiz,accion_causa_raiz,responsable,prioridad,fecha)
@@ -2506,6 +2533,7 @@ def _tab_anexos(codigo, es_nuevo):
             type=['png','jpg','jpeg','bmp','gif','pdf'])
         if st.form_submit_button("+ Agregar Evidencia", type="primary"):
             if uploaded_anx:
+                _ensure_documento_exists(codigo, tipo)
                 img_b = uploaded_anx.read()
                 fmt = "." + uploaded_anx.name.split('.')[-1].lower()
                 db_run("""INSERT INTO evidencias
