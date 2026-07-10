@@ -1907,6 +1907,45 @@ def page_form():
                      procesar_texto_final(cond.get('condicion_actual','')),
                      cond.get('aplica','SI'), cond.get('diferencia','NO')))
 
+
+        # ==============================================================================
+        # GUARDAR IMAGENES ADJUNTAS PARA IA COMO EVIDENCIAS/ANEXOS DEL DOCUMENTO
+        # ==============================================================================
+        archivos_ia_guardar = st.session_state.get('ia_archivos_adjuntos', [])
+        if archivos_ia_guardar:
+            num_evis_guardadas = 0
+            for idx, archivo in enumerate(archivos_ia_guardar):
+                if archivo.get('bytes'):
+                    tipo_evi = 'REFERENCIA'
+                    desc_evi = 'Imagen adjunta para analisis de IA'
+                    if archivo['tipo'] == 'imagen':
+                        tipo_evi = 'REFERENCIA'
+                        desc_evi = 'Foto del problema - Analisis IA (' + str(idx+1) + ')'
+                    elif archivo['tipo'] == 'pdf':
+                        tipo_evi = 'REFERENCIA'
+                        desc_evi = 'Documento adjunto - Analisis IA (' + str(idx+1) + '): ' + archivo.get('nombre', 'PDF')
+                    
+                    fmt = '.' + archivo.get('nombre', 'file.jpg').split('.')[-1].lower()
+                    if fmt not in ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.pdf']:
+                        fmt = '.jpg'
+                    
+                    db_run("""INSERT INTO evidencias
+                        (codigo_documento, nombre_archivo, tipo_evidencia, descripcion,
+                         imagen_blob, tamano_bytes, formato, seccion)
+                        VALUES(?,?,?,?,?,?,?,?)""",
+                        (codigo,
+                         archivo.get('nombre', 'archivo_' + str(idx+1)),
+                         tipo_evi,
+                         desc_evi,
+                         archivo['bytes'],
+                         len(archivo['bytes']),
+                         fmt,
+                         'GENERAL'))
+                    num_evis_guardadas += 1
+            
+            if num_evis_guardadas > 0:
+                st.success('📎 ' + str(num_evis_guardadas) + ' imagen(es)/documento(s) adjunto(s) guardados como evidencias en el documento.')
+
         del st.session_state['ia_resultado']
         del st.session_state['ia_codigo']
         del st.session_state['ia_tipo']
@@ -2160,33 +2199,39 @@ def _upload_imagenes_inline(codigo, seccion, es_nuevo):
         return
     with st.expander("📷 Imagenes / Evidencias de esta seccion (" + seccion.upper() + ")", expanded=False):
         c1, c2 = st.columns([3,1])
-        desc_img = c1.text_input("Descripcion breve", key="desc_img_" + seccion)
-        tipo_evi = c2.selectbox("Tipo", ['FALLA','CAUSA','ACCION','VERIFICACION','REFERENCIA','OTRO'],
-                                key="tipo_evi_" + seccion)
+        desc_img = c1.text_input("Descripcion / Comentario de la imagen",
+                                   placeholder="Describa lo que muestra la foto...",
+                                   key="desc_img_" + seccion)
+        tipo_evi = c2.selectbox("Tipo de evidencia",
+                                  ['FALLA','CAUSA','ACCION','VERIFICACION','REFERENCIA','OTRO'],
+                                  key="tipo_evi_" + seccion)
         uploaded = st.file_uploader("Seleccionar imagen",
             type=['png','jpg','jpeg','bmp','gif'],
             key="uploader_" + seccion)
-        if st.button("+ Agregar imagen", key="btn_img_" + seccion) and uploaded:
+        if st.button("➕ Agregar imagen a evidencias", key="btn_img_" + seccion) and uploaded:
             img_b = uploaded.read()
             fmt = "." + uploaded.name.split('.')[-1].lower()
+            desc_final = desc_img.strip() if desc_img and desc_img.strip() else ("Evidencia seccion " + seccion.upper() + ": " + uploaded.name)
+            # Guardar con seccion especifica y tambien como anexo general
             db_run("""INSERT INTO evidencias
                 (codigo_documento,nombre_archivo,tipo_evidencia,descripcion,imagen_blob,tamano_bytes,formato,seccion)
                 VALUES(?,?,?,?,?,?,?,?)""",
-                   (codigo, uploaded.name, tipo_evi, desc_img or uploaded.name,
+                   (codigo, uploaded.name, tipo_evi, desc_final,
                     img_b, len(img_b), fmt, seccion))
-            st.success("Imagen '" + uploaded.name + "' agregada.")
+            st.success("✅ Imagen '" + uploaded.name + "' agregada a evidencias (tambien visible en Anexos).")
             st.rerun()
 
         evis = db_query("SELECT * FROM evidencias WHERE codigo_documento=? AND seccion=? ORDER BY fecha_registro",
                         (codigo, seccion)) if not es_nuevo else []
         if evis:
+            st.markdown("**" + str(len(evis)) + " imagen(es) en esta seccion:**")
             cols = st.columns(min(len(evis), 4))
             for i, evi in enumerate(evis):
                 with cols[i % 4]:
                     if evi['imagen_blob']:
                         try:
                             img = Image.open(io.BytesIO(evi['imagen_blob']))
-                            st.image(img, caption="Fig. " + str(i+1) + " — " + (evi['descripcion'] or evi['nombre_archivo']),
+                            st.image(img, caption="Fig. " + str(i+1) + " [" + evi['tipo_evidencia'] + "] " + (evi['descripcion'] or evi['nombre_archivo'])[:40],
                                      use_container_width=True)
                         except Exception:
                             st.caption("Fig. " + str(i+1) + ": " + evi['nombre_archivo'])
@@ -2544,44 +2589,78 @@ def _tab_anexos(codigo, es_nuevo):
         st.warning("Guarda primero los datos generales.")
         return
 
+    # ── FORMULARIO PARA AGREGAR NUEVA EVIDENCIA ──
     with st.form("form_anx", clear_on_submit=True):
+        st.markdown("**📎 Agregar nueva evidencia al documento**")
         ac1, ac2 = st.columns([3,1])
-        desc_anx = ac1.text_input("Descripcion breve de la evidencia")
-        tipo_anx = ac2.selectbox("Tipo", ['FALLA','CAUSA','ACCION','VERIFICACION','REFERENCIA','SESION','OTRO'])
-        uploaded_anx = st.file_uploader("Seleccionar archivo",
-            type=['png','jpg','jpeg','bmp','gif','pdf'])
-        if st.form_submit_button("+ Agregar Evidencia", type="primary"):
+        desc_anx = ac1.text_input("Descripcion / Comentario de la evidencia",
+                                    placeholder="Ej: Foto del rodamiento con desgaste visible en pista interna")
+        tipo_anx = ac2.selectbox("Tipo de evidencia",
+                                   ['FALLA','CAUSA','ACCION','VERIFICACION','REFERENCIA','SESION','OTRO'])
+        uploaded_anx = st.file_uploader("Seleccionar archivo (imagen o PDF)",
+            type=['png','jpg','jpeg','bmp','gif','pdf'],
+            help="Suba fotos del equipo, diagramas, procedimientos, o cualquier documento de soporte")
+        if st.form_submit_button("➕ Agregar Evidencia", type="primary"):
             if uploaded_anx:
                 img_b = uploaded_anx.read()
                 fmt = "." + uploaded_anx.name.split('.')[-1].lower()
+                # Usar descripcion proporcionada, o generar una automatica
+                desc_final = desc_anx.strip() if desc_anx and desc_anx.strip() else ("Evidencia: " + uploaded_anx.name)
                 db_run("""INSERT INTO evidencias
                     (codigo_documento,nombre_archivo,tipo_evidencia,descripcion,imagen_blob,tamano_bytes,formato,seccion)
                     VALUES(?,?,?,?,?,?,?,?)""",
-                       (codigo, uploaded_anx.name, tipo_anx, desc_anx or uploaded_anx.name,
+                       (codigo, uploaded_anx.name, tipo_anx, desc_final,
                         img_b, len(img_b), fmt, 'GENERAL'))
-                st.success("Evidencia '" + uploaded_anx.name + "' agregada.")
+                st.success("✅ Evidencia '" + uploaded_anx.name + "' agregada con descripcion.")
                 st.rerun()
+            else:
+                st.warning("⚠️ Seleccione un archivo primero.")
 
+    # ── LISTADO DE EVIDENCIAS EXISTENTES ──
     evis = db_query("SELECT * FROM evidencias WHERE codigo_documento=? ORDER BY fecha_registro", (codigo,))
     if evis:
-        st.markdown("**" + str(len(evis)) + " evidencia(s) registrada(s):**")
-        cols = st.columns(3)
+        st.markdown("---")
+        st.markdown("### 📷 Evidencias registradas (" + str(len(evis)) + ")")
+
         for i, evi in enumerate(evis):
-            with cols[i % 3]:
-                if evi['imagen_blob'] and evi['formato'] in ['.jpg','.jpeg','.png','.bmp','.gif']:
-                    try:
-                        img = Image.open(io.BytesIO(evi['imagen_blob']))
-                        st.image(img, caption="Fig. " + str(i+1) + " [" + evi['tipo_evidencia'] + "] " + (evi['descripcion'] or evi['nombre_archivo']),
-                                 use_container_width=True)
-                    except Exception:
-                        st.caption("Fig. " + str(i+1) + ": " + evi['nombre_archivo'])
-                else:
-                    st.caption("📎 " + evi['nombre_archivo'] + " (" + evi['tipo_evidencia'] + ")")
-                if st.button("🗑 Eliminar Fig." + str(i+1), key="del_anx_" + str(evi['id'])):
-                    db_run("DELETE FROM evidencias WHERE id=?", (evi['id'],))
-                    st.rerun()
+            with st.container():
+                col_img, col_info = st.columns([2, 3])
+
+                with col_img:
+                    if evi['imagen_blob'] and evi['formato'] in ['.jpg','.jpeg','.png','.bmp','.gif']:
+                        try:
+                            img = Image.open(io.BytesIO(evi['imagen_blob']))
+                            st.image(img, use_container_width=True,
+                                     caption="Fig. " + str(i+1))
+                        except Exception:
+                            st.info("📷 Imagen no disponible")
+                    else:
+                        st.info("📄 " + evi['nombre_archivo'] + " (PDF/Documento)")
+
+                with col_info:
+                    st.markdown("**Figura " + str(i+1) + "** | Tipo: `" + evi['tipo_evidencia'] + "`")
+
+                    # Campo editable para la descripcion
+                    nueva_desc = st.text_area("Descripcion / Comentario:",
+                        value=evi['descripcion'] or evi['nombre_archivo'],
+                        height=80,
+                        key="desc_evi_" + str(evi['id']))
+
+                    col_upd, col_del = st.columns(2)
+                    if col_upd.button("💾 Actualizar descripcion", key="upd_evi_" + str(evi['id'])):
+                        db_run("UPDATE evidencias SET descripcion=? WHERE id=?",
+                               (nueva_desc.strip(), evi['id']))
+                        st.success("✅ Descripcion actualizada.")
+                        st.rerun()
+
+                    if col_del.button("🗑 Eliminar", key="del_anx_" + str(evi['id'])):
+                        db_run("DELETE FROM evidencias WHERE id=?", (evi['id'],))
+                        st.success("🗑 Evidencia eliminada.")
+                        st.rerun()
+
+                st.markdown("---")
     else:
-        st.info("No hay evidencias registradas aun.")
+        st.info("📭 No hay evidencias registradas aun. Use el formulario de arriba para agregar fotos o documentos.")
 
 print("Parte 5 generada correctamente")
 
